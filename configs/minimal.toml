@@ -1,8 +1,0 @@
-[mlp.token_mixer]
-equivariant = true
-
-[vit.species_embed.spec_embed]
-out_dim = 64
-
-[mlp.species_embed.spec_embed]
-out_dim = 64
