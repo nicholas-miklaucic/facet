@@ -1,6 +1,6 @@
 from setuptools import setup, find_packages
 
 setup(
-    name='avid',
+    name='cdv',
     packages=find_packages(),
 )
