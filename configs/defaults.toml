@@ -1,0 +1,269 @@
+batch_size = 64
+do_profile = false
+num_epochs = 100
+regressor = "vit"
+task = "e_form"
+
+[voxelizer]
+max_unique_species = 5
+n_grid = 24
+distance_power = 2.0
+eff_scale = 0.7
+num_cells = 4
+
+[data]
+dataset_name = "jarvis_dft3d_cleaned"
+raw_data_folder = "data"
+data_folder = "precomputed"
+shuffle_seed = 1618
+train_split = 21
+test_split = 2
+valid_split = 2
+do_augment = false
+augment_seed = 12345
+so3 = true
+o3 = true
+t3 = true
+
+[data_transform]
+density_transform_name = "log"
+density_scale = 0.25
+density_shift = 1
+eps = 1e-6
+
+[cli]
+verbosity = "info"
+show_progress = true
+
+[device]
+device = "gpu"
+max_gpus = 1
+gpu_ids = []
+
+[log]
+log_dir = "logs"
+logs_per_epoch = 8
+
+[train]
+lr_schedule_kind = "cosine"
+start_lr_frac = 0.1
+base_lr = 0.004
+end_lr_frac = 0.04
+weight_decay = 0.03
+beta_1 = 0.9
+beta_2 = 0.999
+nestorov = true
+max_grad_norm = 1.0
+
+[vit]
+equivariant = false
+out_dim = 1
+
+[diled]
+patch_latent_dim = 384
+patch_conv_sizes = [ 7,]
+patch_conv_strides = [ 3,]
+patch_conv_features = [ 384,]
+use_dec_conv = false
+species_embed_dim = 128
+species_embed_type = "lossy"
+w = 1
+
+[mlp]
+patch_size = 3
+patch_heads = 8
+patch_latent_dim = 512
+num_layers = 4
+num_heads = 4
+out_dim = 1
+
+[vit.vit_input]
+patch_size = 4
+patch_latent_dim = 384
+pos_embed_type = "learned"
+equivariant = true
+patch_heads = 8
+
+[vit.encoder]
+num_layers = 2
+num_heads = 16
+enc_dropout_rate = 0.1
+enc_attention_dropout_rate = 0.1
+equivariant = true
+encoder_type = "vit"
+
+[vit.head]
+inner_dims = []
+activation = "gelu"
+final_activation = "Identity"
+dropout = 0.1
+num_heads = 1
+equivariant = false
+
+[vit.species_embed]
+species_embed_dim = 32
+use_simple_weighting = false
+
+[vit.downsample]
+factor = [ 2,]
+channels_out = [ 256,]
+kernel_size = [ 3,]
+
+[diled.backbone]
+condition_mlp_dims = [ 128,]
+time_dim = 64
+label_dim = 64
+condition_dropout = 0.0
+
+[diled.diffusion]
+schedule_a = 1.7
+schedule_b = 1.9
+timesteps = 100
+class_dropout = 0.5
+
+[diled.category]
+category_loss_type = "cubic_space_group"
+num_bins = 8
+
+[diled.encoder]
+num_layers = 2
+num_heads = 16
+enc_dropout_rate = 0.1
+enc_attention_dropout_rate = 0.1
+equivariant = true
+encoder_type = "vit"
+
+[diled.head]
+inner_dims = []
+activation = "gelu"
+final_activation = "Identity"
+dropout = 0.1
+num_heads = 1
+equivariant = false
+
+[diled.perm_head]
+inner_dims = []
+activation = "gelu"
+final_activation = "Identity"
+dropout = 0.1
+num_heads = 1
+equivariant = false
+
+[mlp.token_mixer]
+inner_dims = []
+activation = "gelu"
+final_activation = "Identity"
+dropout = 0.1
+num_heads = 1
+equivariant = true
+
+[mlp.channel_mixer]
+inner_dims = []
+activation = "gelu"
+final_activation = "Identity"
+dropout = 0.1
+num_heads = 1
+equivariant = false
+
+[mlp.head]
+inner_dims = []
+activation = "gelu"
+final_activation = "Identity"
+dropout = 0.1
+num_heads = 1
+equivariant = false
+
+[mlp.species_embed]
+species_embed_dim = 32
+use_simple_weighting = false
+
+[mlp.downsample]
+factor = [ 2,]
+channels_out = [ 256,]
+kernel_size = [ 3,]
+
+[train.loss.reg_loss]
+loss_delta = 0.1
+use_rmse = false
+
+[vit.encoder.mlp]
+inner_dims = []
+activation = "gelu"
+final_activation = "Identity"
+dropout = 0.1
+num_heads = 1
+equivariant = false
+
+[vit.encoder.token_mixer]
+inner_dims = []
+activation = "gelu"
+final_activation = "Identity"
+dropout = 0.1
+num_heads = 1
+equivariant = false
+
+[vit.species_embed.spec_embed]
+inner_dims = []
+activation = "gelu"
+final_activation = "Identity"
+out_dim = 64
+dropout = 0.1
+num_heads = 1
+equivariant = false
+
+[diled.backbone.time_mlp]
+inner_dims = []
+activation = "gelu"
+final_activation = "Identity"
+dropout = 0.1
+num_heads = 1
+equivariant = false
+
+[diled.backbone.encoder]
+num_layers = 2
+num_heads = 16
+enc_dropout_rate = 0.1
+enc_attention_dropout_rate = 0.1
+equivariant = true
+encoder_type = "vit"
+
+[diled.encoder.mlp]
+inner_dims = []
+activation = "gelu"
+final_activation = "Identity"
+dropout = 0.1
+num_heads = 1
+equivariant = false
+
+[diled.encoder.token_mixer]
+inner_dims = []
+activation = "gelu"
+final_activation = "Identity"
+dropout = 0.1
+num_heads = 1
+equivariant = false
+
+[mlp.species_embed.spec_embed]
+inner_dims = []
+activation = "gelu"
+final_activation = "Identity"
+out_dim = 64
+dropout = 0.1
+num_heads = 1
+equivariant = false
+
+[diled.backbone.encoder.mlp]
+inner_dims = []
+activation = "gelu"
+final_activation = "Identity"
+dropout = 0.1
+num_heads = 1
+equivariant = false
+
+[diled.backbone.encoder.token_mixer]
+inner_dims = []
+activation = "gelu"
+final_activation = "Identity"
+dropout = 0.1
+num_heads = 1
+equivariant = false

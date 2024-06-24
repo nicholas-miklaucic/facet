@@ -1,0 +1,13 @@
+[tool.ruff]
+include = ["avid/**/*.py", "notebooks/**/*.ipynb"]
+
+
+line-length = 100
+
+[tool.ruff.format]
+quote-style = 'single'
+
+[tool.ruff.lint]
+# Doesn't work with jaxtyping.
+# Allow lambda defs
+ignore = ["F722", "E731"]

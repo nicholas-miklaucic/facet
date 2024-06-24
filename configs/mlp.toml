@@ -1,0 +1,62 @@
+batch_size = 52
+do_profile = false
+num_epochs = 50
+regressor = 'mlp'
+
+[data]
+data_batch_size = 52
+raw_data_folder = "data"
+data_folder = "precomputed"
+train_split = 9
+test_split = 2
+valid_split = 2
+do_augment = false
+
+[train]
+max_grad_norm = 3.0
+weight_decay = 0.15
+start_lr_frac = 0.5
+
+[train.loss]
+loss_delta = 0.15
+use_rmse = false
+
+[log]
+exp_name = 'e_form_equivariant_conv'
+
+[mlp]
+patch_size = 3
+patch_latent_dim = 384
+num_blocks = 3
+out_dim = 1
+
+[mlp.token_mixer]
+equivariant = true
+inner_dims = [1]
+dropout = 0
+
+[mlp.token_mixer.activation]
+name = 'swish'
+
+[mlp.channel_mixer]
+inner_dims = [512]
+dropout = 0.1
+
+[mlp.channel_mixer.activation]
+name = 'swish'
+
+[mlp.downsample]
+factor = []
+channels_out = []
+kernel_size = []
+
+[mlp.species_embed]
+species_embed_dim = 64
+use_simple_weighting = true
+
+[mlp.head]
+inner_dims = [2048, 1024, 512]
+dropout = 0.2
+
+[mlp.head.activation]
+name = 'swish'

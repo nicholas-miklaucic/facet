@@ -1,0 +1,119 @@
+batch_size = 32
+do_profile = false
+num_epochs = 100
+regressor = "vit"
+task = "diled"
+
+[voxelizer]
+max_unique_species = 4
+n_grid = 24
+distance_power = 2.4
+eff_scale = 0.7
+num_cells = 4
+
+[data]
+dataset_name = "jarvis_dft3d_cleaned"
+raw_data_folder = "data"
+data_folder = "precomputed"
+shuffle_seed = 1618
+train_split = 21
+test_split = 1
+valid_split = 3
+do_augment = false
+
+[data_transform]
+density_transform_name = "log"
+density_scale = 0.25
+density_shift = 1
+eps = 1e-12
+
+[cli]
+verbosity = "info"
+show_progress = true
+
+[train]
+lr_schedule_kind = "cosine"
+start_lr_frac = 0.1
+base_lr = 0.01
+end_lr_frac = 0.01
+weight_decay = 0
+beta_1 = 0.9
+beta_2 = 0.999
+nestorov = true
+max_grad_norm = 3.0
+
+[diled]
+patch_latent_dim = 512
+patch_conv_sizes = [3]
+patch_conv_strides = [3]
+patch_conv_features = [32]
+species_embed_dim = 128
+species_embed_type = "lossy"
+use_dec_conv = true
+w = 0
+
+[diled.backbone]
+condition_mlp_dims = [64]
+time_dim = 64
+label_dim = 64
+condition_dropout = 0.2
+
+[diled.diffusion]
+schedule_a = 1.7
+schedule_b = 1.9
+timesteps = 100
+class_dropout = 0.25
+
+[diled.category]
+category_loss_type = "cubic_space_group"
+
+[diled.backbone.time_mlp]
+inner_dims = []
+dropout = 0.1
+equivariant = false
+
+[diled.backbone.encoder]
+equivariant = true
+num_layers = 3
+num_heads = 16
+enc_dropout_rate = 0.3
+enc_attention_dropout_rate = 0.3
+
+[diled.head]
+inner_dims = [2048]
+dropout = 0.5
+equivariant = false
+
+[diled.head.activation]
+name = "silu"
+
+[diled.head.final_activation]
+name = "Identity"
+
+[diled.backbone.time_mlp.activation]
+name = "silu"
+
+[diled.backbone.time_mlp.final_activation]
+name = "Identity"
+
+[diled.backbone.encoder.mlp]
+inner_dims = []
+dropout = 0.2
+equivariant = false
+
+[diled.backbone.encoder.mlp.activation]
+name = "silu"
+
+[diled.backbone.encoder.mlp.final_activation]
+name = "Identity"
+
+[diled.perm_head]
+inner_dims = [1024]
+dropout = 0.5
+equivariant = false
+
+[diled.perm_head.activation]
+name = "silu"
+
+[diled.perm_head.final_activation]
+name = "Identity"
