@@ -9,8 +9,7 @@ import flax.linen as nn
 import numpy as np
 import pandas as pd
 from cdv.utils import ELEM_VALS
-from cdv.databatch import Graphs, NodeData, EdgeData, CrystalData, DIMENSIONALITIES
-
+from cdv.databatch import CrystalGraphs, NodeData, EdgeData, CrystalData, DIMENSIONALITIES
 
 
 def process_graph(graph_is, df):
@@ -65,7 +64,7 @@ def process_graph(graph_is, df):
     dtypes = {
         'species': jnp.uint8,
         'graph_i': jnp.uint16,
-        'to_jimage': jnp.int4,
+        'to_jimage': jnp.int8,
         'sender': jnp.uint16,
         'receiver': jnp.uint16
     }
@@ -74,12 +73,13 @@ def process_graph(graph_is, df):
             dtype = dtypes.get(k, None)       
             d[k] = jnp.array(d[k], dtype=dtype)
 
-    G = Graphs(
+    G = CrystalGraphs(
         nodes=NodeData(**nodes), 
         edges=EdgeData(**edge_features),         
         graph_data=CrystalData(**graph_data),
         n_node=jnp.array(n_node), 
-        n_edge=jnp.array(n_edge)
+        n_edge=jnp.array(n_edge),
+        padding_mask=jnp.ones(len(graph_is), dtype=jnp.bool)
     )
     return G
 
@@ -103,6 +103,7 @@ if __name__ == '__main__':
         if e.symbol not in ELEM_VALS:
             raise RuntimeError('ELEM_VALS needs to be updated: ', e)
     
+    # from graphs_processing.ipynb
     batches = jnp.load('precomputed/jarvis_dft3d_cleaned/batches.npy')
 
     import pickle

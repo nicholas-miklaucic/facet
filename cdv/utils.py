@@ -3,6 +3,7 @@
 from os import PathLike
 from pathlib import Path
 import re
+import io
 from abc import ABCMeta
 from dataclasses import asdict, is_dataclass
 from functools import partial
@@ -17,24 +18,50 @@ import rich
 from jaxtyping import jaxtyped
 from pymatgen.core import Element
 from rich.style import Style
+from rich.text import Text
 from rich.tree import Tree
 from flax.serialization import msgpack_restore, msgpack_serialize
 
+# checker = typechecker(conf=BeartypeConf(is_color=False))
+tcheck = partial(jaxtyped, typechecker=None)
+
+# TODO make this dataset-specific
 ELEM_VALS = ('K Rb Ba Na Sr Li Ca La Tb Yb Ce Pr Nd Sm Dy Y Ho Er Tm Hf Mg Zr Sc U Ta Ti Mn Be Nb Al Tl V Zn Cr Cd'
              ' In Ga Fe Co Cu Si Ni Ag Sn Hg Ge Bi B Sb Te Mo As P H Ir Os Pd Ru Pt Rh Pb W Au C Se S I Br N Cl O F').split(
     ' '
 )
 
+INFERNA = [
+    '#e6ab00',
+    '#eb9900',
+    '#ec8800',
+    '#e97800',
+    '#e46a25',
+    '#db5e40',
+    '#cf5352',
+    '#c14b60',
+    '#b5416e',
+    '#a5387c',
+    '#93318a',
+    '#7f2c95',
+    '#67289e',
+    '#4d25a3',
+    '#2f23a3',
+    '#00229c',
+]
 
+from rich.console import Console
+from rich.highlighter import RegexHighlighter
+from rich.theme import Theme
 
 def format_scalar(scalar: int | float, chars=6) -> str:
     """Formats the scalar using no more than the given number of characters, if possible."""
     if scalar < 0:
-        return '-' + format_scalar(scalar, chars=chars-1)    
+        return '-' + format_scalar(scalar, chars=chars - 1)
     if isinstance(scalar, int):
         if len(str(scalar)) - chars > 3:
             # egregiously longer, use scientific notation
-            used = len('{:.0E}'.format(scalar))
+            used = len(f'{scalar:.0E}')
             remaining = max(chars - used, 0)
             return '{:.dE}'.replace('d', str(remaining)).format(scalar)
         else:
@@ -42,7 +69,7 @@ def format_scalar(scalar: int | float, chars=6) -> str:
     else:
         if scalar == int(scalar):
             return format_scalar(int(scalar), chars=chars - 1) + '.'
-        
+
         decimal = str(scalar)
         if decimal.startswith('0.'):
             frac = decimal.removeprefix('0.')
@@ -50,14 +77,15 @@ def format_scalar(scalar: int | float, chars=6) -> str:
         else:
             wasted = len(decimal.replace('.', '').rstrip('0')) - len(decimal.replace('.', ''))
 
-        suffix = '{:.0e}'.format(scalar)[1:]
+        suffix = f'{scalar:.0e}'[1:]
         if wasted > len(suffix):
-            used = len('{:.0E}'.format(scalar))
+            used = len(f'{scalar:.0E}')
             remaining = max(chars - used, 0)
             return '{:.dE}'.replace('d', str(remaining)).format(scalar)
         else:
             remaining = max(chars - 2, 0)
             return '{:.df}'.replace('d', str(remaining)).format(scalar)
+
 
 def item_if_arr(x: int | float | jax.Array) -> float:
     if isinstance(x, (int, float)):
@@ -66,25 +94,11 @@ def item_if_arr(x: int | float | jax.Array) -> float:
         return x.item()
 
 
-# checker = typechecker(conf=BeartypeConf(is_color=False))
-tcheck = partial(jaxtyped, typechecker=None)
-
-
-def val_to_elem(val: int) -> str:
-    return ELEM_VALS[val]
-
-
-def elem_to_val(elem: str | Element) -> int:
-    if isinstance(elem, Element):
-        elem = elem.symbol
-
-    return ELEM_VALS.index(elem)
-
-
 def load_pytree(file: PathLike):
     """Loads a MsgPack serialized PyTree."""
     with open(Path(file), 'rb') as infile:
         return msgpack_restore(infile.read())
+
 
 def save_pytree(obj, file: PathLike):
     """Saves a MsgPack serialized PyTree."""
@@ -92,8 +106,7 @@ def save_pytree(obj, file: PathLike):
         out.write(msgpack_serialize(obj))
 
 
-
-class AbstractTreeVisitor(metaclass=ABCMeta):
+class TreeVisitor:
     def __init__(self):
         pass
 
@@ -107,47 +120,102 @@ class AbstractTreeVisitor(metaclass=ABCMeta):
         raise NotImplementedError()
 
 
-class StatVisitor(AbstractTreeVisitor):
-    def __init__(self) -> None:
+class StatsVisitor(TreeVisitor):
+    def __init__(self, sample_size: int = 10_000) -> None:        
         super().__init__()
+        self.sample_size = sample_size
 
     def jax_arr(self, arr: jax.Array):
-        flat = arr.flatten().astype(jnp.float32)
-        inds = 1 + 0.01 * jnp.cos(jnp.arange(len(flat), dtype=jnp.float32))
-        return f'{(flat * inds).mean().item():.4f}'
+        flat = arr.flatten()
+        size = len(flat)
+        if size <= 5:
+            return str(jnp.round(flat, 4))
+        
+        lo = arr.min().item()
+        hi = arr.max().item()
+        
+        if size <= self.sample_size:
+            sampling = False
+            if flat.dtype == jnp.bfloat16:                
+                x = np.array(flat.astype(jnp.float32))
+            else:
+                x = np.array(flat)
+        else:
+            sampling = True            
+            # really big arrays can be sampled more loosely
+            overflow = max(2, round(np.log10(size) / np.log10(self.sample_size)))
+            
+            # n^2 + 1 tends to have fewer factors: should capture most slices
+            inds = jnp.arange(np.floor(np.sqrt(size - 1)) + 1, dtype=jnp.int64) ** 2 + 1
+            x = np.array(flat[inds])
+
+        summary = ''        
+        if x.dtype.kind == 'f':
+            mu = x.mean()
+            sd = x.std()
+            fmt = lambda s: f'{s:>8.3g}'
+            if (abs(mu) > 1000 or sd > 1000) or (abs(mu) < 1e-2 and sd < 1e-2):
+                factor = round(np.log10(max(abs(mu), sd)))
+                x = x / 10 ** factor
+                summary += f'E{factor} '
+            else:
+                factor = 1
+            summary += f'{fmt(mu / 10 ** factor)} ± {fmt(sd / 10 ** factor)}'            
+        else:
+            zeros = np.mean(x == 0)            
+            if zeros > 0.2:
+                summary += f'{zeros:.0%} 0, '
+
+            if (hi - lo) < 0.2 * size:
+                n_uniq = len(set(x))
+                if n_uniq <= 5:
+                    summary += f'uniq: {set(x)}'
+                else:
+                    summary += f'uniq: {n_uniq}'
+
+            fmt = lambda s: f'{s:n}'
+        
+        q25, q50, q75 = np.quantile(x, [0.25, 0.5, 0.75], method='closest_observation')
+
+        out = f'({fmt(lo)} {fmt(q25)} {fmt(q50)} {fmt(q75)} {fmt(hi)}) {summary}'
+        out += '~' if sampling else ''
+        
+        return out
 
     def scalar(self, x: int | float):
-        return f'{x:.4f}' + x.__class__.__name__[0]
+        return format_scalar(x, 4)
 
     def np_arr(self, arr: np.ndarray):
         return self.jax_arr(jnp.array(arr))
 
 
-class StructureVisitor(AbstractTreeVisitor):
+class StructureVisitor(TreeVisitor):
     def __init__(self):
         super().__init__()
 
     def jax_arr(self, arr: jax.Array):
-        return f'{arr.dtype}{list(arr.shape)}'
+        kind = arr.dtype.name
+        kind = kind.replace('float', 'f').replace('uint', 'u').replace('int', 'i')
+        return f'{kind}{list(arr.shape)}'
 
     def scalar(self, x: int | float):
         return f'{x.__class__.__name__}=' + str(x)
 
     def np_arr(self, arr: np.ndarray):
-        return f'np{list(arr.shape)}'
+        return f'(np){self.jax_arr(jnp.array(arr))}'
 
 
-COLORS = [
+COLORS = [    
     '#00a0ec',
-    '#00bc70',
-    '#deca00',
+    '#00bc70',    
     '#ff7300',
-    '#d83990',
-    '#7555d3',
-    '#8ac7ff',
-    '#00f0ff',
-    '#387200',
+    '#387200',        
     '#aa2e00',
+    '#7555d3',        
+    '#d83990',    
+    '#deca00',
+    '#00f0ff',
+    '#8ac7ff',    
     '#ff7dc6',
     '#e960ff',
 ]
@@ -173,7 +241,7 @@ def tree_from_dict(base: Tree, obj, depth=0, collapse_single=True):
         base.add(obj, style=style)
 
 
-def tree_traverse(visitor: AbstractTreeVisitor, obj, max_depth=2, collapse_single=True):
+def tree_traverse(visitor: TreeVisitor, obj, max_depth=2, collapse_single=True):
     if isinstance(obj, jax.Array):
         return visitor.jax_arr(obj)
     elif isinstance(obj, np.ndarray):
@@ -200,13 +268,11 @@ def tree_traverse(visitor: AbstractTreeVisitor, obj, max_depth=2, collapse_singl
                 new_depth = max_depth - 1
 
             excluded = (('parent', None), ('name', None))
-            return {
-                k: tree_traverse(visitor, v, new_depth)
-                for k, v in obj.items()
-                if (k, v) not in excluded
-            }
+            return {k: tree_traverse(visitor, v, new_depth) for k, v in obj.items() if (k, v) not in excluded}
     elif is_dataclass(obj):
         return {obj.__class__.__name__: tree_traverse(visitor, asdict(obj), max_depth)}
+    elif obj is None:
+        return 'None'
     else:
         name = getattr(obj, '__name__', '|')
         return f'{obj.__class__.__name__}={name}'
@@ -227,7 +293,7 @@ def _debug_structure(tree_depth=5, **kwargs):
 
 def _debug_stat(tree_depth=5, **kwargs):
     """Prints out a reduction of the inputs. Is almost the mean, but with a small fudge factor so differently-shaped arrays will have different summaries."""
-    show_obj({f'{k}': tree_traverse(StatVisitor(), v, tree_depth) for k, v in kwargs.items()})
+    show_obj({f'{k}': tree_traverse(StatsVisitor(), v, tree_depth) for k, v in kwargs.items()})
 
 
 def debug_structure(*args, **kwargs):
@@ -257,6 +323,7 @@ def flax_summary(
     column_kwargs=MappingProxyType({'justify': 'right'}),
     show_repeated=False,
     depth=None,
+    colorize=True,
     **kwargs,
 ):
     out = mod.tabulate(
@@ -275,12 +342,37 @@ def flax_summary(
     # hack to control numbers so they're formatted reasonably
     # 12580739072 flops is not very helpful
 
+    max_color_i = len(INFERNA) - 1
+
+    nums = re.findall(r'\d' * 4 + '+', out)
+    color_max = max(len(n) for n in nums) + 1
+
+    def _colorize(m: re.Match):
+        s = m.group(0)
+
+        n = int(s.strip())
+        e = np.log10(np.abs(n) + 1)
+
+        color_i = int(round(max_color_i * np.clip(e / color_max, 0, 1)))
+
+        color = INFERNA[color_i]
+        t = Text(s.strip(), style=Style(color=color, bold=(e > 3)))
+        f = io.StringIO()
+        console = rich.console.Console(
+            file=f, color_system=rich.console.Console().color_system, **(console_kwargs or {})
+        )
+        console.print(t, end='')
+        return f.getvalue()
+
     def human_units(m: re.Match):
         """Format using units, preserving the length with spaces."""
         human = humanize.metric(int(m.group(0))).replace(' ', '')
         pad_num = len(m.group(0)) - len(human)
         return ' ' * pad_num + human
 
-    out = re.sub(r'\d' * 6 + '+', human_units, out)    
+    if colorize:
+        out = re.sub(r'\d' * 4 + '+', _colorize, out)
+    out = re.sub(r'\d' * 6 + '+', human_units, out)
 
     print(out)
+    return out

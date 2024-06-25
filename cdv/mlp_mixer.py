@@ -8,7 +8,7 @@ from einops import rearrange
 from flax import linen as nn
 from jaxtyping import Array, Float
 
-from cdv.databatch import Graphs
+from cdv.databatch import CrystalGraphs
 from cdv.encoder import ReduceSpeciesEmbed
 from cdv.layers import DeepSetEncoder, LazyInMLP, MLPMixer, PermInvariantEncoder
 from cdv.utils import tcheck
@@ -101,7 +101,7 @@ class MLPMixerRegressor(nn.Module):
     perm_head: LazyInMLP
 
     @nn.compact
-    def __call__(self, im: Graphs, training: bool, abys=ABY_IDENTITY):
+    def __call__(self, im: CrystalGraphs, training: bool, abys=ABY_IDENTITY):
         out = self.spec_embed(im, training=training)
         out = self.downsample(out)
         out = self.im_embed(out)

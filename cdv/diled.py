@@ -14,7 +14,7 @@ from eins import EinsOp
 from flax import linen as nn
 import optax
 
-from cdv.databatch import Graphs
+from cdv.databatch import CrystalGraphs
 from cdv.diffusion import DiffusionInput, DiffusionModel
 from cdv.layers import DeepSetEncoder, LazyInMLP, MLPMixer, PermInvariantEncoder
 from cdv.utils import debug_stat, debug_structure
@@ -77,11 +77,11 @@ class SpeciesTwoWayEmbed(nn.Module):
         """Generates species embedding matrix of orthogonal vectors: (n_species, embed_dim)."""
         raise NotImplementedError
 
-    def __call__(self, data: Graphs):
+    def __call__(self, data: CrystalGraphs):
         """Embeds the batch as a 3D image, shape batch n n n embed_dim."""
         raise NotImplementedError
 
-    def decode(self, im, data: Graphs):
+    def decode(self, im, data: CrystalGraphs):
         """Projects inputs to obtain the original densities."""
         raise NotImplementedError
 
@@ -109,7 +109,7 @@ class OrthoSpeciesEmbed(SpeciesTwoWayEmbed):
         orth = jnp.linalg.multi_dot(mats)
         return orth[: self.n_species]
 
-    def __call__(self, data: Graphs):
+    def __call__(self, data: CrystalGraphs):
         """Embeds the batch as a 3D image, shape batch n n n embed_dim."""
         spec = jax.nn.one_hot(data.species, self.n_species, dtype=jnp.bfloat16)
         # debug_structure(dens=data.density, spec=spec, mat=self.species_embed_matrix())
@@ -120,7 +120,7 @@ class OrthoSpeciesEmbed(SpeciesTwoWayEmbed):
             'batch n1 n2 n3 max_spec, batch max_spec n_spec, n_spec emb -> batch n1 n2 n3 emb',
         ).astype(jnp.bfloat16)
 
-    def decode(self, im, data: Graphs):
+    def decode(self, im, data: CrystalGraphs):
         """Projects inputs to obtain the original densities."""
         # TODO use einsop when this doesn't overflow
         proj = jnp.einsum('bxyze,se->bxyzs', im, self.species_embed_matrix())
@@ -145,7 +145,7 @@ class LossySpeciesEmbed(SpeciesTwoWayEmbed):
         """Generates species embedding matrix of orthogonal vectors: (n_species, embed_dim)."""
         return self.emb.embedding
 
-    def __call__(self, data: Graphs):
+    def __call__(self, data: CrystalGraphs):
         """Embeds the batch as a 3D image, shape batch n n n embed_dim."""
         # spec = jax.nn.one_hot(data.species, self.n_species, dtype=jnp.bfloat16)
         # debug_structure(spec=spec, mat=self.species_embed_matrix())
@@ -158,7 +158,7 @@ class LossySpeciesEmbed(SpeciesTwoWayEmbed):
             'batch n1 n2 n3 max_spec, batch max_spec emb -> batch n1 n2 n3 emb',
         )
 
-    def decode(self, im, data: Graphs):
+    def decode(self, im, data: CrystalGraphs):
         """Projects inputs to obtain the original densities."""
         # dens: b n3 s
         # encoded: b n3 e
@@ -301,14 +301,14 @@ class EncoderDecoder(nn.Module):
                 dtype=jnp.bfloat16,
             )])
 
-    def encode(self, data: Graphs, training: bool):
+    def encode(self, data: CrystalGraphs, training: bool):
         """Returns (spec_emb, enc_conv, patches)"""
         spec_emb = self.spec_emb(data)
         enc = self.encoder_conv(spec_emb)
         patches = self.patch_proj(enc)
         return (spec_emb, enc, patches)
 
-    def patch_decode(self, patches, data: Graphs, training: bool):
+    def patch_decode(self, patches, data: CrystalGraphs, training: bool):
         """Returns (density, rec_spec_emb, spec_emb, dec_conv)"""
         dec = self.dec_patch_proj(patches)
         if self.use_dec_conv:
@@ -326,7 +326,7 @@ class EncoderDecoder(nn.Module):
 class Category:
     """Get category from data."""
 
-    def __call__(self, data: Graphs):
+    def __call__(self, data: CrystalGraphs):
         """Returns list of integers for category."""
         raise NotImplementedError
 
@@ -345,7 +345,7 @@ class EFormCategory(Category):
     def bins(self):
         return jnp.linspace(self.min_bin, self.max_bin, self.num_categories - 2)
 
-    def __call__(self, data: Graphs):
+    def __call__(self, data: CrystalGraphs):
         return jnp.digitize(data.e_form, self.bins)
 
     @property
@@ -357,7 +357,7 @@ class EFormCategory(Category):
 class SpaceGroupCategory(Category):
     just_cubic: bool = True
 
-    def __call__(self, data: Graphs):
+    def __call__(self, data: CrystalGraphs):
         if self.just_cubic:
             return data.space_group - 195
         else:
@@ -384,7 +384,7 @@ class DiLED(nn.Module):
     class_dropout: float = 0.5
 
     @nn.compact
-    def __call__(self, data: Graphs, training: bool):
+    def __call__(self, data: CrystalGraphs, training: bool):
         """Runs a training step, returning loss. Uses time, noise RNG keys."""
         x_0, conv, patch = self.encoder_decoder.encode(data, training=training)
         enc = patch

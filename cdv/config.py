@@ -39,23 +39,19 @@ class DataConfig:
     shuffle_seed: int = 1618
 
     # Train split.
-    train_split: int = 21
+    train_split: int = 22
     # Test split.
     test_split: int = 2
     # Valid split.
     valid_split: int = 2
 
-    # Data augmentations
-    # If False, disables all augmentations.
-    do_augment: bool = False
-    # Random seed for augmentations.
-    augment_seed: int = 12345
-    # Whether to apply SO(3) augmentations: proper rotations
-    so3: bool = True
-    # Whether to apply O(3) augmentations: includes SO(3) and also reflections.
-    o3: bool = True
-    # Whether to apply T(3) augmentations: origin shifts.
-    t3: bool = True
+    # Number of nodes in each batch to pad to.
+    batch_n_nodes: int = 1024
+    # Number of edges in each batch to pad to.
+    batch_n_edges: int = 4096
+    # Number of graphs in each batch to pad to.
+    batch_n_graphs: int = 64
+    
 
     @property
     def metadata(self) -> Mapping[str, Any]:
@@ -76,6 +72,11 @@ class DataConfig:
     def dataset_folder(self) -> Path:
         """Folder where dataset-specific files are stored."""
         return self.data_folder / self.dataset_name
+    
+    @property
+    def num_species(self) -> int:
+        """Number of unique elements."""
+        return len(self.metadata['elements'])
 
 
 @dataclass
@@ -357,7 +358,7 @@ class TrainingConfig:
 @dataclass
 class MainConfig:
     # The batch size. Should be a multiple of data_batch_size to make data loading simple.
-    batch_size: int = 32 * 1
+    batch_size: int = 63 * 1
 
     # Use profiling.
     do_profile: bool = False

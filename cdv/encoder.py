@@ -8,7 +8,7 @@ from einops import rearrange
 from flax import linen as nn
 from jaxtyping import Array, Bool, Float, Int
 
-from cdv.databatch import Graphs
+from cdv.databatch import CrystalGraphs
 from cdv.layers import LazyInMLP
 from cdv.utils import ELEM_VALS, debug_structure, flax_summary, tcheck
 
@@ -46,7 +46,7 @@ class ReduceSpeciesEmbed(nn.Module):
 
     @tcheck
     @nn.compact
-    def __call__(self, data: Graphs, training: bool) -> Float[Array, 'batch nx ny nz _dim_out']:
+    def __call__(self, data: CrystalGraphs, training: bool) -> Float[Array, 'batch nx ny nz _dim_out']:
         spec1 = jax.vmap(
             lambda x, spec, mask: self.species_embed(x=x, spec=spec, mask=mask, training=training)
         )

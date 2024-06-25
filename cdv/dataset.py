@@ -16,21 +16,26 @@ from einops import rearrange
 from eins import EinsOp
 
 from cdv.config import MainConfig
-from cdv.databatch import Graphs, collate
+from cdv.databatch import CrystalGraphs, collate
 from cdv.metadata import Metadata
 from cdv.utils import debug_stat, debug_structure, load_pytree
 
 filterwarnings('ignore', category=BeartypeDecorHintPep585DeprecationWarning)
 
 
-def load_file(config: MainConfig, file_num=0) -> Graphs:
-    """Loads a file. Lacks the complex data loader logic, but easier to use for testing."""
+def load_file(config: MainConfig, file_num=0, pad=True) -> CrystalGraphs:
+    """Loads a file. Lacks the complex data loader logic, but easier to use for testing.
+    If pad, pads the batch to the expected size."""
     data_folder = config.data.dataset_folder
     fn = data_folder / 'batches' / f'batch{file_num}.mpk'
 
     with open(fn, 'rb') as file:
-        data: Graphs = from_bytes(Graphs.new_empty(1, 1, 1), file.read())
+        data: CrystalGraphs = from_bytes(CrystalGraphs.new_empty(1, 1, 1), file.read())
         data = jax.tree.map(jnp.array, data)
+
+    # debug_structure(data)
+    if pad:
+        data = data.padded(config.data.batch_n_nodes, config.data.batch_n_edges, config.data.batch_n_graphs)
 
     return data
 
@@ -71,20 +76,6 @@ def dataloader_base(
         len(split_idx) // config.train_batch_multiple,
     )
 
-    if config.data.do_augment:
-        # aug_rng = np.random.default_rng(config.data.augment_seed)
-        # transform = partial(
-        #     randomly_augment,
-        #     so3=config.data.so3,
-        #     o3=config.data.o3,
-        #     t3=config.data.t3,
-        #     n_grid=config.voxelizer.n_grid,
-        #     rng=aug_rng,
-        # )
-        transform = lambda x: x
-    else:
-        transform = lambda x: x
-
     # first batch doesn't augment: that's the base on which future augmentations happen. It may make
     # sense in the future to have limited, imperfect augmentations, and we don't want those to be
     # stacked on top of themselves.
@@ -93,7 +84,7 @@ def dataloader_base(
             split_files[batch] = [load_file(config, i) for i in batch]
 
             batch_data = split_files[batch]
-            collated = jax.tree_map(lambda *args: jnp.concat(args, axis=0), *batch_data)
+            collated = collate(batch_data)
             yield jax.device_put(collated, device)
 
     while infinite:
@@ -102,7 +93,7 @@ def dataloader_base(
             len(split_idx) // config.train_batch_multiple,
         )
         for batch in batch_inds:
-            batch_data = [transform(split_files[i]) for i in batch]
+            batch_data = [split_files[i] for i in batch]
             collated = collate(batch_data)
             yield jax.device_put(collated, device)
 

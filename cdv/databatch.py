@@ -1,15 +1,14 @@
 from typing import Sequence
 from flax import struct
 from collections import defaultdict
-from jaxtyping import Float, Array, Int
+from jaxtyping import Float, Array, Int, Bool
 from cdv.utils import debug_structure
 import jax
 import jax.numpy as jnp
 
 DIMENSIONALITIES = ['3D-bulk', 'intercalated ion', '2D-bulk', '0D-bulk', '1D-bulk', 'na', 'intercalated molecule']
 
-@struct.dataclass
-class NodeData:
+class NodeData(struct.PyTreeNode):
     species: Int[Array, 'nodes']
     frac: Float[Array, 'nodes 3']
     cart: Float[Array, 'nodes 3']
@@ -18,14 +17,13 @@ class NodeData:
     @classmethod
     def new_empty(cls, nodes: int) -> 'NodeData':
         return cls(
-            species=jnp.empty(nodes),
+            species=jnp.empty(nodes, dtype=jnp.int16),
             frac=jnp.empty((nodes, 3)),
             cart=jnp.empty((nodes, 3)),
-            graph_i=jnp.empty(nodes)
+            graph_i=jnp.empty(nodes, dtype=jnp.int16)
         )
 
-@struct.dataclass
-class EdgeData:
+class EdgeData(struct.PyTreeNode):
     to_jimage: Int[Array, 'edges 3']
     graph_i: Int[Array, 'edges']
     sender: Int[Array, 'edges']
@@ -34,14 +32,13 @@ class EdgeData:
     @classmethod
     def new_empty(cls, edges: int) -> 'EdgeData':
         return cls(
-            to_jimage=jnp.empty((edges, 3)),
-            sender=jnp.empty(edges),
-            receiver=jnp.empty(edges),
-            graph_i=jnp.empty(edges)
+            to_jimage=jnp.empty((edges, 3), dtype=jnp.int8),
+            sender=jnp.empty(edges, dtype=jnp.int32),
+            receiver=jnp.empty(edges, dtype=jnp.int32),
+            graph_i=jnp.empty(edges, dtype=jnp.int16)
         )
 
-@struct.dataclass
-class CrystalData:
+class CrystalData(struct.PyTreeNode):
     dataset_i: Int[Array, 'graphs']
     abc: Float[Array, 'graphs 3']
     angles_rad: Float[Array, 'graphs 3']
@@ -73,13 +70,13 @@ class CrystalData:
         )
 
 
-@struct.dataclass
-class Graphs:
+class CrystalGraphs(struct.PyTreeNode):
     """Batched/padded graphs. Should be able to sub in for jraph.GraphsTuple."""
     nodes: NodeData
     edges: EdgeData
     n_node: Int[Array, 'graphs']
     n_edge: Int[Array, 'graphs']
+    padding_mask: Bool[Array, 'graphs']
     graph_data: CrystalData
 
     @property
@@ -106,9 +103,8 @@ class Graphs:
     def n_total_graphs(self) -> int:
         return len(self.n_node)
     
-    def __add__(self, other: 'Graphs') -> 'Graphs':
-        """Collates both objects together, taking care to deal with index offsets."""
-        print('Hi')
+    def __add__(self, other: 'CrystalGraphs') -> 'CrystalGraphs':
+        """Collates both objects together, taking care to deal with index offsets."""        
         other_nodes = other.nodes.replace(graph_i=other.nodes.graph_i + self.n_total_graphs)
         other_edges = other.edges.replace(
             graph_i=other.edges.graph_i + self.n_total_graphs,
@@ -117,20 +113,36 @@ class Graphs:
         )
 
         other = other.replace(nodes=other_nodes, edges=other_edges)
-        return jax.tree.map(lambda x, y: jnp.concatenate((x, y)), self, (other,))
+        return jax.tree.map(lambda x, y: jnp.concatenate((x, y)), self, other)
+    
+    def padded(self, n_node: int, n_edge: int, n_graph: int):
+        """Pad the graph to the given shape. Adds a single padding graph
+        with the required extra nodes and edges, then adds empty graphs."""
+        pad_n_node = int(n_node - self.n_total_nodes)
+        pad_n_edge = int(n_edge - self.n_total_edges)
+        pad_n_graph = int(n_graph - self.n_total_graphs)
+        # https://github.com/google-deepmind/jraph/blob/master/jraph/_src/utils.py#L604
+        if pad_n_node <= 0 or pad_n_edge < 0 or pad_n_graph <= 0:
+            raise RuntimeError(
+                'Given graph is too large for the given padding. difference: '
+                f'n_node {pad_n_node}, n_edge {pad_n_edge}, n_graph {pad_n_graph}')
+        
+        return self + CrystalGraphs.new_empty(pad_n_node, pad_n_edge, pad_n_graph)
+
     
     @classmethod
-    def new_empty(cls, nodes: int, edges: int, graphs: int) -> 'Graphs':
+    def new_empty(cls, nodes: int, edges: int, graphs: int) -> 'CrystalGraphs':        
         return cls(
             nodes=NodeData.new_empty(nodes),
             edges=EdgeData.new_empty(edges),
             graph_data=CrystalData.new_empty(graphs),
-            n_node=jnp.empty(graphs),
-            n_edge=jnp.empty(graphs),
+            n_node=jnp.concat((jnp.array([nodes]), jnp.zeros(graphs - 1, jnp.int16))),
+            n_edge=jnp.concat((jnp.array([edges]), jnp.zeros(graphs - 1, jnp.int16))),
+            padding_mask=jnp.ones(graphs, dtype=jnp.bool)
         )
 
     
 
-def collate(graphs: Sequence[Graphs]) -> Graphs:
+def collate(graphs: Sequence[CrystalGraphs]) -> CrystalGraphs:
     """Collates the batches into a new Graphs object."""
     return sum(graphs[1:], start=graphs[0])

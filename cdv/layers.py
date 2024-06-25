@@ -8,10 +8,14 @@ from eins import EinsOp
 import jax
 import jax.numpy as jnp
 from flax import linen as nn
+from flax import struct
 from jaxtyping import Array, Float
 
 from cdv.utils import debug_structure, tcheck
 
+
+class Context(struct.PyTreeNode):
+    training: bool
 
 class Identity(nn.Module):
     """Module that does nothing, used so model summaries accurately communicate the purpose."""
@@ -26,6 +30,7 @@ class LazyInMLP(nn.Module):
 
     inner_dims: Sequence[int]
     out_dim: Optional[int] = None
+    residual: bool = False
     inner_act: Callable = nn.gelu
     final_act: Callable = Identity()
     dropout_rate: float = 0.0
@@ -34,7 +39,8 @@ class LazyInMLP(nn.Module):
 
     @tcheck
     @nn.compact
-    def __call__(self, x: Float[Array, 'n_in'], training: bool):
+    def __call__(self, x: Float[Array, 'n_in'], ctx: Context):
+        orig_x = x
         _curr_dim = x.shape[-1]
         if self.out_dim is None:
             out_dim = _curr_dim
@@ -46,13 +52,21 @@ class LazyInMLP(nn.Module):
                 next_dim, kernel_init=self.kernel_init, bias_init=self.bias_init, dtype=x.dtype
             )(x)
             x = self.inner_act(x)
-            x = nn.Dropout(self.dropout_rate, deterministic=not training)(x)
+            x = nn.Dropout(self.dropout_rate, deterministic=not ctx.training)(x)
             x = nn.LayerNorm(dtype=x.dtype)(x)
             _curr_dim = next_dim
 
         x = nn.Dense(
             out_dim, kernel_init=self.kernel_init, bias_init=self.bias_init, dtype=x.dtype
-        )(x)
+        )(x)        
+        if self.residual:
+            if orig_x.shape[-1] != out_dim:
+                x_resid = nn.Dense(out_dim, kernel_init=self.kernel_init, bias_init=self.bias_init, dtype=x.dtype)(orig_x)
+            else:
+                x_resid = orig_x
+            
+            x = x + x_resid
+
         x = self.final_act(x)
         return x
 
@@ -72,7 +86,8 @@ class MixerBlock(nn.Module):
     attention_dropout_rate: float = 0.1
 
     @nn.compact
-    def __call__(self, inputs: Float[Array, 'batch seq chan'], abys: Float[Array, '6 chan'], training: bool) -> Float[Array, 'batch seq chan']:
+    def __call__(self, inputs: Float[Array, 'batch seq chan'], abys: Float[Array, '6 chan'], ctx: Context) -> Float[Array, 'batch seq chan']:
+        training = ctx.training
         a1, b1, y1, a2, b2, y2 = abys
         x = nn.LayerNorm(scale_init=nn.zeros, dtype=inputs.dtype)(inputs)
         x = x * y1 + b1
@@ -115,7 +130,7 @@ class MLPMixer(nn.Module):
     attention_dropout_rate: float = 0.1
 
     @nn.compact
-    def __call__(self, inputs, abys, *, training: bool) -> Array:
+    def __call__(self, inputs, abys, *, ctx: Context) -> Array:
         x = inputs
         # Num Blocks x Mixer Blocks
         for _ in range(self.num_layers):
@@ -124,7 +139,7 @@ class MLPMixer(nn.Module):
                 channels_mlp=self.channels_mlp.copy(),
                 dropout_rate=self.dropout_rate,
                 attention_dropout_rate=self.attention_dropout_rate,
-            )(x, abys, training=training)
+            )(x, abys, training=ctx.training)
         # Output Head
         x = nn.LayerNorm(dtype=x.dtype, name='pre_head_layer_norm')(x)
         return x
