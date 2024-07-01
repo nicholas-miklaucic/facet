@@ -18,11 +18,23 @@ from cdv import layers
 from cdv.diffusion import DiffusionBackbone, DiffusionModel, DiT, KumaraswamySchedule
 from cdv.diled import Category, DiLED, EFormCategory, EncoderDecoder, SpaceGroupCategory
 from cdv.encoder import Downsample, ReduceSpeciesEmbed, SpeciesEmbed
+from cdv.gnn import GN, GaussBasis, InputEncoder, LearnedSpecEmb, MLPMessagePassing, NodeAggReadout, SegmentReduction
 from cdv.layers import Identity, LazyInMLP, MLPMixer
 from cdv.mlp_mixer import MLPMixerRegressor, O3ImageEmbed
 from cdv.utils import ELEM_VALS
 
 pyrallis.set_config_type('toml')
+
+
+@dataclass
+class LogConfig:
+    log_dir: Path = Path('logs/')
+
+    exp_name: Optional[str] = None
+
+    # How many times to make a log each epoch.
+    # 208 = 2^4 * 13 steps per epoch with batch of 1: evenly dividing this is nice.
+    logs_per_epoch: int = 8
 
 @dataclass
 class DataConfig:
@@ -46,11 +58,15 @@ class DataConfig:
     valid_split: int = 2
 
     # Number of nodes in each batch to pad to.
-    batch_n_nodes: int = 1024
+    batch_n_nodes: int = 512
     # Number of edges in each batch to pad to.
-    batch_n_edges: int = 4096
+    batch_n_edges: int = 10096
     # Number of graphs in each batch to pad to.
     batch_n_graphs: int = 64
+
+    @property
+    def graph_shape(self) -> tuple[int, int, int]:
+        return (self.batch_n_nodes, self.batch_n_edges, self.batch_n_graphs)
     
 
     @property
@@ -77,15 +93,6 @@ class DataConfig:
     def num_species(self) -> int:
         """Number of unique elements."""
         return len(self.metadata['elements'])
-
-
-@dataclass
-class DataTransformConfig:
-    # Density power to transform as.
-    density_power: float = 1 / 9
-
-    def density_transform(self) -> ElementwiseOp:
-        return E.from_func(lambda x: x ** self.density_power)
 
 
 
@@ -202,7 +209,7 @@ class MLPConfig:
     inner_dims: list[int] = field(default_factory=list)
 
     # Inner activation.
-    activation: str = 'gelu'
+    activation: str = 'swish'
 
     # Final activation.
     final_activation: str = 'Identity'
@@ -211,7 +218,10 @@ class MLPConfig:
     out_dim: Optional[int] = None
 
     # Dropout.
-    dropout: float = 0.1
+    dropout: float = 0.0
+
+    # Whether to add residual.
+    residual: bool = False
 
     # Number of heads, for equivariant layer.
     num_heads: int = 1
@@ -224,19 +234,55 @@ class MLPConfig:
             inner_act=Layer(self.activation).build(),
             final_act=Layer(self.final_activation).build(),
             dropout_rate=self.dropout,
+            residual=self.residual
         )
+    
+@dataclass
+class GaussBasisConfig:
+    lo: float = 0
+    hi: float = 8
+    sd: float = 1
+    emb: int = 32
+
+    def build(self, dim: int) -> GaussBasis:
+        return GaussBasis(self.lo, self.hi, self.sd, self.emb, nn.Dense(dim))
 
 
 @dataclass
-class LogConfig:
-    log_dir: Path = Path('logs/')
-
-    exp_name: Optional[str] = None
-
-    # How many times to make a log each epoch.
-    # 208 = 2^4 * 13 steps per epoch with batch of 1: evenly dividing this is nice.
-    logs_per_epoch: int = 8
-
+class CoGNConfig:
+    # Edge initial embeddings.
+    dist_enc: GaussBasisConfig = field(default_factory=GaussBasisConfig)
+    # Node embedding dimension.
+    node_dim: int = 128
+    # Edge embedding dimension:
+    edge_dim: int = 128
+    # MLP for message passing.
+    msg_layer: MLPConfig = field(default_factory=lambda: MLPConfig(out_dim=None))
+    # MLP for node update.
+    node_layer: MLPConfig = field(default_factory=lambda: MLPConfig(out_dim=None))
+    # Number of processing blocks.
+    num_blocks: int = 5
+    # Reduction for node update.
+    node_update_reduction: str = 'mean'
+    # Node reduction for readout.
+    node_agg_reduction: str = 'mean'
+    # Readout head
+    readout_head: MLPConfig = field(default_factory=lambda: MLPConfig(out_dim=1))
+    
+    def build(self, num_species: int) -> GN:
+        input_enc = InputEncoder(
+            self.dist_enc.build(self.edge_dim),
+            LearnedSpecEmb(num_species, self.node_dim)
+        )        
+        block_templ = MLPMessagePassing(
+            node_reduction=self.node_update_reduction,
+            node_emb=self.node_dim,
+            msg_dim=self.node_dim,
+            msg_templ=self.msg_layer.build(),
+            node_templ=self.node_layer.build(),
+        )
+        readout = NodeAggReadout(self.readout_head.build().copy(out_dim=1))
+        return GN(input_enc, self.num_blocks, block_templ, readout)
 
 
 @dataclass
@@ -373,13 +419,14 @@ class MainConfig:
     encoder_start_from: Optional[Path] = None
 
     data: DataConfig = field(default_factory=DataConfig)
-    data_transform: DataTransformConfig = field(default_factory=DataTransformConfig)
     cli: CLIConfig = field(default_factory=CLIConfig)
     device: DeviceConfig = field(default_factory=DeviceConfig)
     log: LogConfig = field(default_factory=LogConfig)
     train: TrainingConfig = field(default_factory=TrainingConfig)
+    cogn: CoGNConfig = field(default_factory=CoGNConfig)
 
-    regressor: str = 'vit'
+
+    regressor: str = 'cogn'
 
     task: str = 'e_form'
 
@@ -416,14 +463,9 @@ class MainConfig:
     #     )
     #     return self.diffusion.diffusion.build(diffuser)
 
-    def build_mlp(self) -> MLPMixerRegressor:
-        return self.mlp.build()
-
     def build_regressor(self):
-        if self.regressor == 'vit':
-            return self.build_vit()
-        elif self.regressor == 'mlp':
-            return self.build_mlp()
+        if self.regressor == 'cogn':
+            return self.cogn.build(self.data.num_species)
         else:
             raise ValueError
 

@@ -24,7 +24,8 @@ from flax.training import train_state
 
 from cdv.checkpointing import best_ckpt
 from cdv.config import LossConfig, MainConfig
-from cdv.dataset import DataBatch, dataloader
+from cdv.dataset import CrystalGraphs, dataloader
+from cdv.layers import Context
 from cdv.utils import item_if_arr
 
 @struct.dataclass
@@ -49,8 +50,8 @@ class TrainState(train_state.TrainState):
     last_grad_norm: float
 
 
-def create_train_state(module: nn.Module, optimizer, rng, batch: DataBatch):
-    loss, params = module.init_with_output(rng, batch, training=False)
+def create_train_state(module: nn.Module, optimizer, rng, batch: CrystalGraphs):
+    loss, params = module.init_with_output(rng, batch, ctx=Context(training=False))
     tx = optimizer
     return TrainState.create(
         apply_fn=module.apply,
@@ -118,9 +119,9 @@ class TrainingRun:
     @staticmethod
     @ft.partial(jax.jit, static_argnames=('task', 'config'))
     @chex.assert_max_traces(5)
-    def compute_metrics(*, task: str, config: LossConfig, state: TrainState, batch: DataBatch, rng):
+    def compute_metrics(*, task: str, config: LossConfig, state: TrainState, batch: CrystalGraphs, rng):
         if task == 'e_form':
-            preds = state.apply_fn(state.params, batch, training=False, rngs=rng).squeeze()
+            preds = state.apply_fn(state.params, batch, ctx=Context(training=False), rngs=rng).squeeze()
             loss = config.regression_loss(preds, batch.e_form)
             mae = jnp.abs(preds - batch.e_form).mean()
             rmse = jnp.sqrt(optax.losses.squared_error(preds, batch.e_form).mean())
@@ -128,7 +129,7 @@ class TrainingRun:
                 mae=mae, loss=loss, rmse=rmse, grad_norm=state.last_grad_norm
             )
         elif task == 'diled':
-            losses = state.apply_fn(state.params, batch, training=False, rngs=rng)
+            losses = state.apply_fn(state.params, batch, ctx=Context(training=False), rngs=rng)
             losses = {k: jnp.mean(v) for k, v in losses.items()}
             losses['grad_norm'] = state.last_grad_norm
             metric_updates = dict(**losses)
@@ -143,7 +144,7 @@ class TrainingRun:
     @staticmethod
     @ft.partial(jax.jit, static_argnames=('task', 'config'))
     @chex.assert_max_traces(5)
-    def train_step(task: str, config: LossConfig, state: TrainState, batch: DataBatch, rng):
+    def train_step(task: str, config: LossConfig, state: TrainState, batch: CrystalGraphs, rng):
         """Train for a single step."""
         rngs = {k: v for k, v in rng.items()} if isinstance(rng, dict) else {'params': rng}
         rngs['dropout'] = jax.random.fold_in(key=rng['params'], data=state.step)
@@ -152,11 +153,11 @@ class TrainingRun:
 
         def loss_fn(params):
             if task == 'e_form':
-                preds = state.apply_fn(params, batch, training=True, rngs=rngs).squeeze()
+                preds = state.apply_fn(params, batch, ctx=Context(training=True), rngs=rngs).squeeze()
                 loss = config.regression_loss(preds, batch.e_form)
                 return loss
             else:
-                losses = state.apply_fn(params, batch, training=True, rngs=rngs)
+                losses = state.apply_fn(params, batch, ctx=Context(training=True), rngs=rngs)
                 return losses['loss'].mean()
 
         grad_fn = jax.grad(loss_fn)
@@ -177,7 +178,7 @@ class TrainingRun:
     def next_step(self):
         return self.step(self.curr_step + 1, next(self.dl))
 
-    def step(self, step: int, batch: DataBatch):
+    def step(self, step: int, batch: CrystalGraphs):
         self.curr_step = step
         if step == 0:
             # initialize model

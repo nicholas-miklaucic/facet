@@ -12,7 +12,7 @@ from eins.reduction import Reduction
 from eins import EinsOp
 import pyrallis
 
-from cdv.config import MainConfig
+
 from cdv.databatch import CrystalGraphs
 from cdv.dataset import load_file
 from cdv.layers import Context, Identity, LazyInMLP
@@ -50,7 +50,7 @@ class DistanceEncoder(nn.Module):
     
 
 class GaussBasis(DistanceEncoder):
-    """Uses equispaced Gaussians, as in coGN."""    
+    """Uses equispaced Gaussian RBFs, as in coGN."""    
     lo: float = 0
     hi: float = 8
     sd: float = 1
@@ -61,9 +61,9 @@ class GaussBasis(DistanceEncoder):
         self.locs = jnp.linspace(self.lo, self.hi, self.emb)
 
     def __call__(self, d: Float[Array, 'batch'], ctx: Context) -> Float[Array, 'batch emb']:
-        z = (d - self.locs) / self.sd
-        probs = jax.scipy.stats.norm.pdf(z)
-        return self.projector(probs)
+        z = d[:, None] - self.locs[None, :]
+        y = jnp.exp(-(z ** 2) / (2 * self.sd ** 2))
+        return self.projector(y)
     
 
 class SpeciesEmbedding(nn.Module):
@@ -96,8 +96,9 @@ class InputEncoder(nn.Module):
         offsets = cg.graph_data.abc[cg.edges.graph_i] * cg.edges.to_jimage
         recv_pos = cg.nodes.cart[cg.receivers] + offsets
 
-        dist = EinsOp('edge 3, edge 3 -> edge', reduce='l2_norm')(send_pos, recv_pos)
-        dist_emb = jax.vmap(self.distance_enc, in_axes=(0, None))(dist, ctx)
+        dist = EinsOp('edge 3, edge 3 -> edge', combine='add', reduce='l2_norm')(send_pos, recv_pos)
+        dist_emb = self.distance_enc(dist, ctx)
+        # debug_stat(dist=dist, dist_emb=dist_emb)
 
         node_emb = self.species_emb(cg, ctx)
 
@@ -115,7 +116,7 @@ class InputEncoder(nn.Module):
 
 
 def segment_mean(data, segment_ids, **kwargs):
-    return jax.ops.segment_sum(data, segment_ids, **kwargs) / jax.ops.segment_sum(jnp.ones_like(data), segment_ids, **kwargs)
+    return jax.ops.segment_sum(data, segment_ids, **kwargs) / (1e-6 + jax.ops.segment_sum(jnp.ones_like(data), segment_ids, **kwargs))
 
 SegmentReduction = Literal['max', 'min', 'prod', 'sum', 'mean']
 
@@ -172,8 +173,8 @@ class MLPMessagePassing(MessagePassing):
     node_templ: LazyInMLP
 
     def setup(self):
-        self.msg = self.msg_templ.copy(out_dim=self.msg_dim)
-        self.node_mlp = self.node_templ.copy(out_dim=self.node_emb)
+        self.msg = self.msg_templ.copy(out_dim=self.msg_dim, name='msg')
+        self.node_mlp = self.node_templ.copy(out_dim=self.node_emb, name='node')
 
     def node_update(self, node: Float[Array, 'node_emb'], message: Float[Array, 'msg_dim'], ctx: Context) -> Float[Array, 'node_emb']:
         """Updates the node information using the reduced message."""
@@ -203,7 +204,7 @@ class NodeAggReadout(Readout):
         return self.head(graph_embs, ctx=ctx)
     
 
-class Model(nn.Module):    
+class GN(nn.Module):    
     input_enc: InputEncoder    
     num_blocks: int
     block_templ: ProcessingBlock
@@ -211,7 +212,7 @@ class Model(nn.Module):
 
     @nn.compact
     def __call__(self, cg: CrystalGraphs, ctx: Context) -> Float[Array, 'graphs out_dim']:
-        g = self.input_enc(cg, ctx)
+        g = self.input_enc(cg, ctx)        
         for _i in range(self.num_blocks):
             block = self.block_templ.copy()
             g = block(g, ctx)
@@ -220,6 +221,7 @@ class Model(nn.Module):
 
 
 if __name__ == '__main__':
+    from cdv.config import MainConfig
     config = pyrallis.parse(config_class=MainConfig)
     config.cli.set_up_logging()
 
@@ -241,7 +243,7 @@ if __name__ == '__main__':
     readout = NodeAggReadout(
         LazyInMLP([], out_dim=1)
     )
-    model = Model(input_enc, 2, block, readout)    
+    model = GN(input_enc, 2, block, readout)    
 
     batch = load_file(config, 300)
 

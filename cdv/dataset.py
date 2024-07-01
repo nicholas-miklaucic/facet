@@ -1,12 +1,15 @@
 """Code to load the processed data."""
 
+import functools
+from multiprocessing import Pool
+
 from functools import partial
 from os import PathLike
 from pathlib import Path
 from typing import Literal
 from warnings import filterwarnings
 
-from flax.serialization import from_bytes
+from flax.serialization import from_state_dict, msgpack_restore
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -15,7 +18,6 @@ from beartype.roar import BeartypeDecorHintPep585DeprecationWarning
 from einops import rearrange
 from eins import EinsOp
 
-from cdv.config import MainConfig
 from cdv.databatch import CrystalGraphs, collate
 from cdv.metadata import Metadata
 from cdv.utils import debug_stat, debug_structure, load_pytree
@@ -23,25 +25,33 @@ from cdv.utils import debug_stat, debug_structure, load_pytree
 filterwarnings('ignore', category=BeartypeDecorHintPep585DeprecationWarning)
 
 
-def load_file(config: MainConfig, file_num=0, pad=True) -> CrystalGraphs:
+def load_raw(config: 'MainConfig', file_num=0, pad=True):
     """Loads a file. Lacks the complex data loader logic, but easier to use for testing.
-    If pad, pads the batch to the expected size."""
+    If pad, pads the batch to the expected size."""    
     data_folder = config.data.dataset_folder
     fn = data_folder / 'batches' / f'batch{file_num}.mpk'
 
     with open(fn, 'rb') as file:
-        data: CrystalGraphs = from_bytes(CrystalGraphs.new_empty(1, 1, 1), file.read())
-        data = jax.tree.map(jnp.array, data)
+        return msgpack_restore(file.read())
+
+@partial(jax.jit, static_argnames=('pad',))
+def process_raw(raw_data, pad=None) -> CrystalGraphs:
+    data: CrystalGraphs = from_state_dict(CrystalGraphs.new_empty(1, 1, 1), jax.tree.map(jnp.array, raw_data))
 
     # debug_structure(data)
-    if pad:
-        data = data.padded(config.data.batch_n_nodes, config.data.batch_n_edges, config.data.batch_n_graphs)
+    if pad is not None:
+        data = data.padded(*pad)
 
     return data
 
+def load_file(config: 'MainConfig', file_num=0, pad=True) -> CrystalGraphs:
+    """Loads a file. Lacks the complex data loader logic, but easier to use for testing.
+    If pad, pads the batch to the expected size."""    
+    return process_raw(load_raw(config, file_num, pad), config.data.graph_shape)
+
 
 def dataloader_base(
-    config: MainConfig, split: Literal['train', 'test', 'valid'] = 'train', infinite: bool = False
+    config: 'MainConfig', split: Literal['train', 'test', 'valid'] = 'train', infinite: bool = False
 ):
     """Returns a generator that produces batches to train on. If infinite, repeats forever: otherwise, stops when all data has been yielded."""
     data_folder = config.data.dataset_folder
@@ -76,13 +86,17 @@ def dataloader_base(
         len(split_idx) // config.train_batch_multiple,
     )
 
+        
+    file_data = list(map(functools.partial(load_raw, config), split_idx))
+    byte_data = dict(zip(split_idx, file_data))
+
     # first batch doesn't augment: that's the base on which future augmentations happen. It may make
     # sense in the future to have limited, imperfect augmentations, and we don't want those to be
     # stacked on top of themselves.
-    with jax.default_device(jax.devices('cpu')[0]):
+    with jax.default_device(jax.devices('cpu')[0]):        
         for batch in batch_inds:
-            split_files[batch] = [load_file(config, i) for i in batch]
-
+            data_files = list(map(functools.partial(process_raw, pad=config.data.graph_shape), [byte_data[i] for i in batch]))
+            split_files[batch] = data_files
             batch_data = split_files[batch]
             collated = collate(batch_data)
             yield jax.device_put(collated, device)
@@ -93,13 +107,13 @@ def dataloader_base(
             len(split_idx) // config.train_batch_multiple,
         )
         for batch in batch_inds:
-            batch_data = [split_files[i] for i in batch]
+            batch_data = split_files[batch]
             collated = collate(batch_data)
             yield jax.device_put(collated, device)
 
 
 def dataloader(
-    config: MainConfig, split: Literal['train', 'test', 'valid'] = 'train', infinite: bool = False
+    config: 'MainConfig', split: Literal['train', 'test', 'valid'] = 'train', infinite: bool = False
 ):
     dl = dataloader_base(config, split, infinite)
     steps_per_epoch = next(dl)
@@ -117,11 +131,11 @@ def num_elements_class(batch):
 
 
 if __name__ == '__main__':
+    from cdv.config import MainConfig
     config = pyrallis.parse(config_class=MainConfig)
     config.cli.set_up_logging()
 
-    f1 = load_file(config, 300)
-    print(f1)
+    f1 = load_file(config, 300)    
     debug_structure(conf=f1)
 
     from tqdm import tqdm

@@ -103,6 +103,10 @@ class CrystalGraphs(struct.PyTreeNode):
     def n_total_graphs(self) -> int:
         return len(self.n_node)
     
+    @property
+    def e_form(self) -> Float[Array, 'graphs']:
+        return self.graph_data.e_form
+        
     def __add__(self, other: 'CrystalGraphs') -> 'CrystalGraphs':
         """Collates both objects together, taking care to deal with index offsets."""        
         other_nodes = other.nodes.replace(graph_i=other.nodes.graph_i + self.n_total_graphs)
@@ -124,8 +128,9 @@ class CrystalGraphs(struct.PyTreeNode):
         # https://github.com/google-deepmind/jraph/blob/master/jraph/_src/utils.py#L604
         if pad_n_node <= 0 or pad_n_edge < 0 or pad_n_graph <= 0:
             raise RuntimeError(
-                'Given graph is too large for the given padding. difference: '
-                f'n_node {pad_n_node}, n_edge {pad_n_edge}, n_graph {pad_n_graph}')
+                'Given graph is too large for the given padding.\n'
+                f'Current shape: {self.n_total_nodes} nodes, {self.n_total_edges} edges, {self.n_total_graphs} graphs\n'
+                f'Desired shape: {n_node} nodes, {n_edge} edges, {n_graph} graphs')
         
         return self + CrystalGraphs.new_empty(pad_n_node, pad_n_edge, pad_n_graph)
 

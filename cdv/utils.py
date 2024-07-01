@@ -157,10 +157,10 @@ class StatsVisitor(TreeVisitor):
             if (abs(mu) > 1000 or sd > 1000) or (abs(mu) < 1e-2 and sd < 1e-2):
                 factor = round(np.log10(max(abs(mu), sd)))
                 x = x / 10 ** factor
-                summary += f'E{factor} '
+                summary += f' E{factor}'
             else:
                 factor = 1
-            summary += f'{fmt(mu / 10 ** factor)} ± {fmt(sd / 10 ** factor)}'            
+            summary = f'{fmt(mu / 10 ** factor)} ± {fmt(sd / 10 ** factor)}' + summary
         else:
             zeros = np.mean(x == 0)            
             if zeros > 0.2:
@@ -177,7 +177,8 @@ class StatsVisitor(TreeVisitor):
         
         q25, q50, q75 = np.quantile(x, [0.25, 0.5, 0.75], method='closest_observation')
 
-        out = f'({fmt(lo)} {fmt(q25)} {fmt(q50)} {fmt(q75)} {fmt(hi)}) {summary}'
+        quarts = f'({fmt(lo)} {fmt(q25)} {fmt(q50)} {fmt(q75)} {fmt(hi)})'
+        out = f'{quarts:>50} {summary}'
         out += '~' if sampling else ''
         
         return out

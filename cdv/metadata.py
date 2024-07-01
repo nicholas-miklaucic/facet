@@ -11,8 +11,6 @@ from pymatgen.symmetry.analyzer import SpacegroupAnalyzer
 from rich.progress import track
 from rich.prompt import Confirm
 
-from cdv.config import MainConfig
-
 
 class Metadata(eqx.Module):
     e_form: Float[Array, 'n_b b']
@@ -29,6 +27,7 @@ def space_group_int(struct: Structure) -> int:
     return ana.get_space_group_number()
 
 if __name__ == '__main__':
+    from cdv.config import MainConfig
     if not Confirm.ask('Regenerate metadata files?'):
         raise ValueError('Aborted')
 
