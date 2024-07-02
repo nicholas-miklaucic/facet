@@ -35,12 +35,12 @@ def load_raw(config: 'MainConfig', file_num=0):
         return msgpack_restore(file.read())
 
 def process_raw(raw_data, pad=None) -> CrystalGraphs:
-    data: CrystalGraphs = from_state_dict(CrystalGraphs.new_empty(1, 1, 1, 1), raw_data)
+    data: CrystalGraphs = from_state_dict(CrystalGraphs.new_empty(1, 1, 1), raw_data)
     data = jax.tree.map(jnp.array, data)
 
     # debug_structure(data)
     if pad is not None:        
-        debug_structure(d=data, dp=data.padded(*pad))
+        # debug_structure(d=data, dp=data.padded(*pad))
         data = data.padded(*pad)
 
     return data
@@ -149,17 +149,14 @@ if __name__ == '__main__':
 
     dens = []
     e_forms = []
-    num_triplets = []
     for _i in tqdm(np.arange(steps_per_epoch * 2)):
         batch = next(dl)
         dens.append(batch.graph_data.density.mean())
         e_forms.append(batch.graph_data.e_form.mean())
-        num_triplets.append(batch.num_total_triplets)
 
 
     debug_structure(conf=next(dl))
 
     print(jnp.mean(jnp.array(dens)))
     print(jnp.array(e_forms).mean())
-    debug_stat(jnp.array(num_triplets))
 

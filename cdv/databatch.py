@@ -37,17 +37,6 @@ class EdgeData(struct.PyTreeNode):
             receiver=jnp.empty(edges, dtype=jnp.int32),
             graph_i=jnp.empty(edges, dtype=jnp.int16)
         )
-    
-class TripletData(struct.PyTreeNode):
-    ij_i: Int[Array, 'triplets']
-    jk_i: Int[Array, 'triplets']
-
-    @classmethod
-    def new_empty(cls, triplets: int) -> 'TripletData':
-        return cls(        
-            ij_i=jnp.empty(triplets, dtype=jnp.int32),
-            jk_i=jnp.empty(triplets, dtype=jnp.int32),
-        )
 
 class CrystalData(struct.PyTreeNode):
     dataset_i: Int[Array, 'graphs']
@@ -85,7 +74,6 @@ class CrystalGraphs(struct.PyTreeNode):
     """Batched/padded graphs. Should be able to sub in for jraph.GraphsTuple."""
     nodes: NodeData
     edges: EdgeData
-    triplets: TripletData
     n_node: Int[Array, 'graphs']
     n_edge: Int[Array, 'graphs']
     padding_mask: Bool[Array, 'graphs']
@@ -112,10 +100,6 @@ class CrystalGraphs(struct.PyTreeNode):
         return len(self.edges.graph_i)
     
     @property
-    def n_total_triplets(self) -> int:
-        return len(self.triplets.ij_i)
-    
-    @property
     def n_total_graphs(self) -> int:
         return len(self.n_node)
     
@@ -135,31 +119,28 @@ class CrystalGraphs(struct.PyTreeNode):
         other = other.replace(nodes=other_nodes, edges=other_edges)
         return jax.tree.map(lambda x, y: jnp.concatenate((x, y)), self, other)
     
-    def padded(self, n_node: int, n_edge: int, n_triplet: int, n_graph: int):
+    def padded(self, n_node: int, n_edge: int, n_graph: int):
         """Pad the graph to the given shape. Adds a single padding graph
         with the required extra nodes and edges, then adds empty graphs."""
         pad_n_node = int(n_node - self.n_total_nodes)
-        pad_n_edge = int(n_edge - self.n_total_edges)
-        pad_n_triplet = int(n_triplet - self.n_total_triplets)
+        pad_n_edge = int(n_edge - self.n_total_edges)        
         pad_n_graph = int(n_graph - self.n_total_graphs)
-
-        debug_structure(self)
+        
         # https://github.com/google-deepmind/jraph/blob/master/jraph/_src/utils.py#L604
-        if pad_n_node <= 0 or pad_n_edge < 0 or pad_n_triplet < 0 or pad_n_graph <= 0:
+        if pad_n_node <= 0 or pad_n_edge < 0 or pad_n_graph <= 0:
             raise RuntimeError(
                 'Given graph is too large for the given padding.\n'
-                f'Current shape: {self.n_total_nodes} nodes, {self.n_total_edges} edges, {self.n_total_triplets} triplets, {self.n_total_graphs} graphs\n'
-                f'Desired shape: {n_node} nodes, {n_edge} edges, {n_triplet} triplets, {n_graph} graphs')
+                f'Current shape: {self.n_total_nodes} nodes, {self.n_total_edges} edges, {self.n_total_graphs} graphs\n'
+                f'Desired shape: {n_node} nodes, {n_edge} edges, {n_graph} graphs')
         
-        return self + CrystalGraphs.new_empty(pad_n_node, pad_n_edge, pad_n_triplet, pad_n_graph)
+        return self + CrystalGraphs.new_empty(pad_n_node, pad_n_edge, pad_n_graph)
 
     
     @classmethod
-    def new_empty(cls, nodes: int, edges: int, triplets: int, graphs: int) -> 'CrystalGraphs':
+    def new_empty(cls, nodes: int, edges: int, graphs: int) -> 'CrystalGraphs':
         return cls(
             nodes=NodeData.new_empty(nodes),
-            edges=EdgeData.new_empty(edges),
-            triplets=TripletData.new_empty(triplets),
+            edges=EdgeData.new_empty(edges),            
             graph_data=CrystalData.new_empty(graphs),
             n_node=jnp.concat((jnp.array([nodes]), jnp.zeros(graphs - 1, jnp.int16))),
             n_edge=jnp.concat((jnp.array([edges]), jnp.zeros(graphs - 1, jnp.int16))),

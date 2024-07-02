@@ -9,7 +9,7 @@ import flax.linen as nn
 import numpy as np
 import pandas as pd
 from cdv.utils import ELEM_VALS
-from cdv.databatch import CrystalGraphs, NodeData, EdgeData, CrystalData, DIMENSIONALITIES, TripletData
+from cdv.databatch import CrystalGraphs, NodeData, EdgeData, CrystalData, DIMENSIONALITIES
 
 
 def process_structure_graph(graph_is, df):
@@ -145,13 +145,10 @@ def process_raw_graph(graph_is, df):
          for k in d:
             dtype = dtypes.get(k, None)       
             d[k] = jnp.array(d[k], dtype=dtype)
-    
-    triplet_ij, triplet_jk = np.where(edge_features['receiver'][:, None] == edge_features['sender'][None, :])
 
     G = CrystalGraphs(
         nodes=NodeData(**nodes), 
         edges=EdgeData(**edge_features),
-        triplets=TripletData(triplet_ij, triplet_jk),
         graph_data=CrystalData(**graph_data),
         n_node=jnp.array(n_node), 
         n_edge=jnp.array(n_edge),

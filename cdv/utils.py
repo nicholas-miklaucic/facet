@@ -152,10 +152,10 @@ class StatsVisitor(TreeVisitor):
 
         summary = ''        
         if x.dtype.kind == 'f':
-            mu = x.mean()
-            sd = x.std()
+            mu = np.nanmean(x)
+            sd = np.nanstd(x)
             fmt = lambda s: f'{s:>8.3g}'         
-            if ((abs(mu) > 1000 or sd > 1000) or (abs(mu) < 1e-2 and sd < 1e-2)) and np.all(np.isfinite(x)):
+            if ((abs(mu) > 1000 or sd > 1000) or (1e-5 < abs(mu) < 1e-2 and 1e-5 < sd < 1e-2)):
                 factor = round(np.log10(max(abs(mu), sd)))
                 x = x / 10 ** factor
                 summary += f' E{factor}'

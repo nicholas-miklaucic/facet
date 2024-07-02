@@ -61,14 +61,12 @@ class DataConfig:
     batch_n_nodes: int = 512
     # Number of edges in each batch to pad to.
     batch_n_edges: int = 10096
-    # Number of triplets in each batch to pad to.
-    batch_n_triplets: int = 10096
     # Number of graphs in each batch to pad to.
     batch_n_graphs: int = 64
 
     @property
     def graph_shape(self) -> tuple[int, int, int]:
-        return (self.batch_n_nodes, self.batch_n_edges, self.batch_n_triplets, self.batch_n_graphs)
+        return (self.batch_n_nodes, self.batch_n_edges, self.batch_n_graphs)
     
 
     @property

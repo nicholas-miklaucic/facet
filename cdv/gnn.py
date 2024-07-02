@@ -22,6 +22,7 @@ from cdv.utils import debug_stat, debug_structure, flax_summary
 class Graphs(struct.PyTreeNode):
     """Generic graphs."""
     node_emb: Float[Array, 'nodes node_emb']
+    carts: Float[Array, 'nodes 3']
     senders: Int[Array, 'edges']
     receivers: Int[Array, 'edges']
     edge_emb: Float[Array, 'edges edge_emb']
@@ -173,6 +174,7 @@ class InputEncoder(nn.Module):
 
         return Graphs(
             node_emb=node_emb,
+            carts=cg.nodes.cart,
             senders=cg.senders,
             receivers=cg.receivers,
             edge_emb=dist_emb,
@@ -195,46 +197,6 @@ def angle(a, b, c):
 
     return jnp.arccos(jnp.dot(ab, cb))
 
-class NestedGraphEncoder(nn.Module):
-    """
-    Converts a crystal graph into a nested graph representation. Each node corresponds to an edge in
-    the old graph, with an edge between ab and cd iff b = c.
-    """
-    hidden_dim: int
-    angle_enc: nn.Module
-    pair_mlp_templ: LazyInMLP
-    head: LazyInMLP
-
-    def setup(self):
-        self.edge_proj = nn.Dense(self.hidden_dim, use_bias=False)
-        self.pair_mlp = self.pair_mlp_templ.copy(name='pair_mlp', out_dim=self.hidden_dim)
-        self.out_lin_rbf = nn.Dense(self.hidden_dim, use_bias=False)
-
-        
-    def initial_node_emb(self, edge: Float[Array, 'batch edge_emb'], sender: Float[Array, 'batch node_emb'], recv: Float[Array, 'batch node_emb'], ctx: Context) -> Float[Array, 'batch new_node_emb']:
-        """Computes the initial embedding for the node describing an edge between the two inputs."""
-        edge_emb = self.edge_proj(edge)
-        return self.pair_mlp(jnp.concat((edge_emb, sender, recv)), ctx)
-
-    def __call__(self, g: Graphs, ctx: Context) -> Graphs:
-        is_triplet = g.receivers[:, None] == g.senders[None, :]
-        # is_triplet[a][b]: does edge a send a message to edge b?
-        
-        edge_ij = jnp.vstack((g.senders, g.receivers))
-
-        return Graphs(
-            node_emb=node_emb,            
-            senders=g.senders,
-            receivers=g.receivers,
-            edge_emb=dist_emb,
-            graph_emb=g.graph_emb,
-            n_nodes=g.n_edges,
-            n_edges=edge_emb.shape,
-            node_graph_i=g.edge_graph_i,
-            edge_graph_i=cg.edges.graph_i,
-            padding_mask=g.padding_mask
-        )
-        
 
 
 
@@ -316,6 +278,7 @@ class Readout(nn.Module):
     """Readout block in GNN."""
     def __call__(self, g: Graphs, ctx: Context) -> Float[Array, 'graphs out_dim']:
         raise NotImplementedError
+    
 
 class NodeAggReadout(Readout):
     """Aggregates node features."""    
@@ -329,6 +292,29 @@ class NodeAggReadout(Readout):
         transformed = jax.vmap(self.node_transform, in_axes=(0, None))(g.node_emb, ctx)
         graph_embs = segment_reduce(self.graph_reduction, transformed, g.node_graph_i, num_segments=g.n_total_graphs)
         return self.head(graph_embs, ctx=ctx)
+    
+
+
+
+class Edge2NodeAgg(ProcessingBlock):
+    """
+    Dimenet++ output block. Aggregates edge embeddings together. 
+    """
+    distance_embed_dim: int    
+    head: LazyInMLP
+    edge_to_node: SegmentReduction = 'mean'
+
+    @nn.compact
+    def __call__(self, g: Graphs, ctx: Context) -> Graphs:
+        total_hidden_dim = g.edge_emb.shape[-1]
+        hidden_dim = total_hidden_dim - self.distance_embed_dim
+        edge_proj = nn.Dense(hidden_dim, use_bias=False)
+        dist_proj = edge_proj(g.edge_emb[..., :self.distance_embed_dim])
+        combined_embed = dist_proj * g.edge_emb[..., self.distance_embed_dim:]
+        node_embs = segment_reduce(self.edge_to_node, combined_embed, g.receivers, num_segments=g.n_total_nodes)
+        node_out = self.head(node_embs, ctx=ctx)
+        return g.replace(node_emb=node_out), ctx
+        
     
 
 class GN(nn.Module):    
@@ -368,9 +354,9 @@ if __name__ == '__main__':
         node_templ=LazyInMLP([]),
         msg_templ=LazyInMLP([])
     )    
-    readout = NodeAggReadout(
-        LazyInMLP([], out_dim=1)
-    )
+    readout = nn.Sequential([
+        Edge2NodeAgg(3, head=LazyInMLP([], out_dim=node_emb)),
+        NodeAggReadout(LazyInMLP([], out_dim=1))])
     model = GN(input_enc, 2, block, readout)
 
     batch = load_file(config, 300)
@@ -385,7 +371,9 @@ if __name__ == '__main__':
         preds = model.apply(params, batch, ctx=Context(training=False))
         return config.train.loss.regression_loss(preds, batch.graph_data.e_form.reshape(-1, 1), batch.padding_mask)
 
-    debug_stat(jax.value_and_grad(lambda x: jnp.mean(loss(x)))(params))
+    res = jax.value_and_grad(loss)(params)
+    print(res)
+    debug_stat(res)
 
     # debug_structure(batch=batch, module=model, out=out)
     # debug_stat(batch=batch, module=model, out=out)    
