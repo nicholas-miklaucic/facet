@@ -1,5 +1,6 @@
 """Utilities."""
 
+from math import isfinite
 from os import PathLike
 from pathlib import Path
 import re
@@ -153,8 +154,8 @@ class StatsVisitor(TreeVisitor):
         if x.dtype.kind == 'f':
             mu = x.mean()
             sd = x.std()
-            fmt = lambda s: f'{s:>8.3g}'
-            if (abs(mu) > 1000 or sd > 1000) or (abs(mu) < 1e-2 and sd < 1e-2):
+            fmt = lambda s: f'{s:>8.3g}'         
+            if ((abs(mu) > 1000 or sd > 1000) or (abs(mu) < 1e-2 and sd < 1e-2)) and np.all(np.isfinite(x)):
                 factor = round(np.log10(max(abs(mu), sd)))
                 x = x / 10 ** factor
                 summary += f' E{factor}'

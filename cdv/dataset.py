@@ -25,7 +25,7 @@ from cdv.utils import debug_stat, debug_structure, load_pytree
 filterwarnings('ignore', category=BeartypeDecorHintPep585DeprecationWarning)
 
 
-def load_raw(config: 'MainConfig', file_num=0, pad=True):
+def load_raw(config: 'MainConfig', file_num=0):
     """Loads a file. Lacks the complex data loader logic, but easier to use for testing.
     If pad, pads the batch to the expected size."""    
     data_folder = config.data.dataset_folder
@@ -34,12 +34,13 @@ def load_raw(config: 'MainConfig', file_num=0, pad=True):
     with open(fn, 'rb') as file:
         return msgpack_restore(file.read())
 
-@partial(jax.jit, static_argnames=('pad',))
 def process_raw(raw_data, pad=None) -> CrystalGraphs:
-    data: CrystalGraphs = from_state_dict(CrystalGraphs.new_empty(1, 1, 1), jax.tree.map(jnp.array, raw_data))
+    data: CrystalGraphs = from_state_dict(CrystalGraphs.new_empty(1, 1, 1, 1), raw_data)
+    data = jax.tree.map(jnp.array, data)
 
     # debug_structure(data)
-    if pad is not None:
+    if pad is not None:        
+        debug_structure(d=data, dp=data.padded(*pad))
         data = data.padded(*pad)
 
     return data
@@ -47,7 +48,11 @@ def process_raw(raw_data, pad=None) -> CrystalGraphs:
 def load_file(config: 'MainConfig', file_num=0, pad=True) -> CrystalGraphs:
     """Loads a file. Lacks the complex data loader logic, but easier to use for testing.
     If pad, pads the batch to the expected size."""    
-    return process_raw(load_raw(config, file_num, pad), config.data.graph_shape)
+    if pad:
+        pad = config.data.graph_shape
+    else:
+        pad = None
+    return process_raw(load_raw(config, file_num), pad)
 
 
 def dataloader_base(
@@ -95,7 +100,7 @@ def dataloader_base(
     # stacked on top of themselves.
     with jax.default_device(jax.devices('cpu')[0]):        
         for batch in batch_inds:
-            data_files = list(map(functools.partial(process_raw, pad=config.data.graph_shape), [byte_data[i] for i in batch]))
+            data_files = [process_raw(byte_data[i], pad=config.data.graph_shape) for i in batch]
             split_files[batch] = data_files
             batch_data = split_files[batch]
             collated = collate(batch_data)
@@ -144,14 +149,17 @@ if __name__ == '__main__':
 
     dens = []
     e_forms = []
+    num_triplets = []
     for _i in tqdm(np.arange(steps_per_epoch * 2)):
         batch = next(dl)
         dens.append(batch.graph_data.density.mean())
         e_forms.append(batch.graph_data.e_form.mean())
+        num_triplets.append(batch.num_total_triplets)
 
 
     debug_structure(conf=next(dl))
 
     print(jnp.mean(jnp.array(dens)))
     print(jnp.array(e_forms).mean())
+    debug_stat(jnp.array(num_triplets))
 

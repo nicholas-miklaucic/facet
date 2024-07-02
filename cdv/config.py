@@ -61,12 +61,14 @@ class DataConfig:
     batch_n_nodes: int = 512
     # Number of edges in each batch to pad to.
     batch_n_edges: int = 10096
+    # Number of triplets in each batch to pad to.
+    batch_n_triplets: int = 10096
     # Number of graphs in each batch to pad to.
     batch_n_graphs: int = 64
 
     @property
     def graph_shape(self) -> tuple[int, int, int]:
-        return (self.batch_n_nodes, self.batch_n_edges, self.batch_n_graphs)
+        return (self.batch_n_nodes, self.batch_n_edges, self.batch_n_triplets, self.batch_n_graphs)
     
 
     @property
@@ -244,8 +246,8 @@ class GaussBasisConfig:
     sd: float = 1
     emb: int = 32
 
-    def build(self, dim: int) -> GaussBasis:
-        return GaussBasis(self.lo, self.hi, self.sd, self.emb, nn.Dense(dim))
+    def build(self) -> GaussBasis:
+        return GaussBasis(self.lo, self.hi, self.sd, self.emb)
 
 
 @dataclass
@@ -271,7 +273,8 @@ class CoGNConfig:
     
     def build(self, num_species: int) -> GN:
         input_enc = InputEncoder(
-            self.dist_enc.build(self.edge_dim),
+            self.dist_enc.build(),
+            nn.Dense(self.edge_dim),
             LearnedSpecEmb(num_species, self.node_dim)
         )        
         block_templ = MLPMessagePassing(
@@ -320,13 +323,14 @@ class RegressionLossConfig:
     # Whether to use RMSE loss instead.
     use_rmse: bool = False
 
-    def regression_loss(self, preds, targets):
+    def regression_loss(self, preds, targets, mask):
+        mask = mask.reshape(preds.shape)
         return jax.lax.cond(
             self.use_rmse,
-            lambda: jnp.sqrt(optax.losses.squared_error(preds, targets).mean()),
+            lambda: jnp.sqrt(optax.losses.squared_error(preds, targets).mean(where=mask)),
             lambda: (
                 optax.losses.huber_loss(preds, targets, delta=self.loss_delta) / self.loss_delta
-            ).mean(),
+            ).mean(where=mask),
         )
 
 
@@ -336,8 +340,8 @@ class LossConfig:
 
     reg_loss: RegressionLossConfig = field(default_factory=RegressionLossConfig)
 
-    def regression_loss(self, preds, targets):
-        return self.reg_loss.regression_loss(preds, targets)
+    def regression_loss(self, preds, targets, mask):
+        return self.reg_loss.regression_loss(preds, targets, mask)
 
 
 @dataclass

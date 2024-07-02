@@ -122,9 +122,9 @@ class TrainingRun:
     def compute_metrics(*, task: str, config: LossConfig, state: TrainState, batch: CrystalGraphs, rng):
         if task == 'e_form':
             preds = state.apply_fn(state.params, batch, ctx=Context(training=False), rngs=rng).squeeze()
-            loss = config.regression_loss(preds, batch.e_form)
-            mae = jnp.abs(preds - batch.e_form).mean()
-            rmse = jnp.sqrt(optax.losses.squared_error(preds, batch.e_form).mean())
+            loss = config.regression_loss(preds, batch.e_form, batch.padding_mask)
+            mae = jnp.abs(preds - batch.e_form).mean(where=batch.padding_mask)
+            rmse = jnp.sqrt(optax.losses.squared_error(preds, batch.e_form).mean(where=batch.padding_mask))
             metric_updates = dict(
                 mae=mae, loss=loss, rmse=rmse, grad_norm=state.last_grad_norm
             )

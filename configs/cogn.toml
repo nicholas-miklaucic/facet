@@ -52,7 +52,6 @@ inner_dims = [128, 128, 128, 128]
 activation = "swish"
 final_activation = "Identity"
 dropout = 0.0
-residual = false
 num_heads = 1
 
 [cogn.node_layer]

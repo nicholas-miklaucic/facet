@@ -9,7 +9,7 @@ import flax.linen as nn
 import numpy as np
 import pandas as pd
 from cdv.utils import ELEM_VALS
-from cdv.databatch import CrystalGraphs, NodeData, EdgeData, CrystalData, DIMENSIONALITIES
+from cdv.databatch import CrystalGraphs, NodeData, EdgeData, CrystalData, DIMENSIONALITIES, TripletData
 
 
 def process_structure_graph(graph_is, df):
@@ -99,7 +99,7 @@ def process_raw_graph(graph_is, df):
 
         crystal = metadata.atoms
 
-        n_nodes = metadata['num_atoms']
+        n_nodes = len(crystal.sites)
         
         n_node.append(n_nodes)
     
@@ -119,7 +119,7 @@ def process_raw_graph(graph_is, df):
                 edge_features['to_jimage'].append(offset)
                 edge_features['graph_i'].append(batch_samp_i)
                 edge_features['sender'].append(senders[-1])
-                edge_features['receiver'].append(receivers[-1])
+                edge_features['receiver'].append(receivers[-1])                
 
         graph_data['dataset_i'].append(graph_i)
         graph_data['abc'].append(crystal.lattice.parameters[:3])
@@ -145,10 +145,13 @@ def process_raw_graph(graph_is, df):
          for k in d:
             dtype = dtypes.get(k, None)       
             d[k] = jnp.array(d[k], dtype=dtype)
+    
+    triplet_ij, triplet_jk = np.where(edge_features['receiver'][:, None] == edge_features['sender'][None, :])
 
     G = CrystalGraphs(
         nodes=NodeData(**nodes), 
-        edges=EdgeData(**edge_features),         
+        edges=EdgeData(**edge_features),
+        triplets=TripletData(triplet_ij, triplet_jk),
         graph_data=CrystalData(**graph_data),
         n_node=jnp.array(n_node), 
         n_edge=jnp.array(n_edge),
@@ -158,8 +161,6 @@ def process_raw_graph(graph_is, df):
 
 from tqdm import tqdm
 from flax.serialization import to_bytes
-import gc
-import jraph
 
 if __name__ == '__main__':
     from rich.prompt import Confirm
