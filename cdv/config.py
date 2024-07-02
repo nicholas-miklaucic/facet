@@ -18,7 +18,7 @@ from cdv import layers
 from cdv.diffusion import DiffusionBackbone, DiffusionModel, DiT, KumaraswamySchedule
 from cdv.diled import Category, DiLED, EFormCategory, EncoderDecoder, SpaceGroupCategory
 from cdv.encoder import Downsample, ReduceSpeciesEmbed, SpeciesEmbed
-from cdv.gnn import GN, GaussBasis, InputEncoder, LearnedSpecEmb, MLPMessagePassing, NodeAggReadout, SegmentReduction
+from cdv.gnn import GN, Bessel1DBasis, Bessel2DBasis, DimeNetPP, DimeNetPPOutput, GaussBasis, InputEncoder, LearnedSpecEmb, MLPMessagePassing, NodeAggReadout, SegmentReduction, TripletAngleEmbedding
 from cdv.layers import Identity, LazyInMLP, MLPMixer
 from cdv.mlp_mixer import MLPMixerRegressor, O3ImageEmbed
 from cdv.utils import ELEM_VALS
@@ -60,7 +60,7 @@ class DataConfig:
     # Number of nodes in each batch to pad to.
     batch_n_nodes: int = 512
     # Number of edges in each batch to pad to.
-    batch_n_edges: int = 10096
+    batch_n_edges: int = 9872
     # Number of graphs in each batch to pad to.
     batch_n_graphs: int = 64
 
@@ -309,6 +309,42 @@ class SpeciesEmbedConfig:
             ),
             name='species_embed',
         )
+    
+
+@dataclass
+class DimeNetPPConfig:
+    num_radial: int = 8
+    num_spherical: int = 7
+    envelope_exp: int = 6
+    cutoff: float = 7
+    species_emb: int = 64
+    act: Layer = field(default_factory=lambda: Layer('sigmoid'))
+    initial_embed: MLPConfig = field(default_factory=lambda: MLPConfig(out_dim=None))
+    int_dist_enc: MLPConfig = field(default_factory=lambda: MLPConfig(out_dim=None))
+    int_ang_enc: MLPConfig = field(default_factory=lambda: MLPConfig(out_dim=None))
+    int_down_proj: MLPConfig = field(default_factory=lambda: MLPConfig(out_dim=None))
+    int_up_proj: MLPConfig = field(default_factory=lambda: MLPConfig(out_dim=None))
+    int_pre_skip: MLPConfig = field(default_factory=lambda: MLPConfig(out_dim=None))
+    int_post_skip: MLPConfig = field(default_factory=lambda: MLPConfig(out_dim=None))
+    edge2node: str = 'mean'
+    node2graph: str = 'mean'
+    head: MLPConfig = field(default_factory=lambda: MLPConfig(out_dim=None))
+
+    def build(self, num_species: int) -> DimeNetPP:
+        distance_enc = Bessel1DBasis(num_basis=self.num_radial, cutoff=self.cutoff, envelope_exp=self.envelope_exp)
+
+        return DimeNetPP(
+            input_enc=InputEncoder(distance_enc=distance_enc.copy(), distance_projector=Identity(), species_emb=LearnedSpecEmb(num_specs=num_species, embed_dim=self.species_emb)),
+            sbf=TripletAngleEmbedding(Bessel2DBasis(num_radial=self.num_radial, num_spherical=self.num_spherical, cutoff=self.cutoff, envelope_exp=self.envelope_exp)),
+            initial_embed_mlp=LazyInMLP([]),
+            output=DimeNetPPOutput(head=LazyInMLP([]), edge2node=self.edge2node, node2graph=self.node2graph),
+            int_dist_enc=LazyInMLP([]),
+            int_ang_enc=LazyInMLP([]),
+            int_down_proj_mlp=LazyInMLP([]),
+            int_up_proj_mlp=LazyInMLP([]),
+            int_pre_skip_mlp=LazyInMLP([]),
+            int_post_skip_mlp=LazyInMLP([])
+        )
 
 
 @dataclass
@@ -426,9 +462,10 @@ class MainConfig:
     log: LogConfig = field(default_factory=LogConfig)
     train: TrainingConfig = field(default_factory=TrainingConfig)
     cogn: CoGNConfig = field(default_factory=CoGNConfig)
+    dimenet: DimeNetPPConfig = field(default_factory=DimeNetPPConfig)
 
 
-    regressor: str = 'cogn'
+    regressor: str = 'dimenet'
 
     task: str = 'e_form'
 
@@ -468,6 +505,8 @@ class MainConfig:
     def build_regressor(self):
         if self.regressor == 'cogn':
             return self.cogn.build(self.data.num_species)
+        elif self.regressor == 'dimenet':
+            return self.dimenet.build(self.data.num_species)
         else:
             raise ValueError
 

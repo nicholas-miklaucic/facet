@@ -42,7 +42,7 @@ def show_model(config: MainConfig, make_hlo_dot=False):
     def loss(params):
         preds = mod.apply(params, batch, rngs=rngs, ctx=Context(training=True))
         if config.task == 'e_form':
-            return {'loss': config.train.loss.regression_loss(preds, batch.graph_data.e_form.reshape(-1, 1))}
+            return {'loss': config.train.loss.regression_loss(preds, batch.graph_data.e_form.reshape(-1, 1), batch.padding_mask)}
         else:
             return preds
 

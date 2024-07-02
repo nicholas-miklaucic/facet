@@ -154,7 +154,7 @@ class TrainingRun:
         def loss_fn(params):
             if task == 'e_form':
                 preds = state.apply_fn(params, batch, ctx=Context(training=True), rngs=rngs).squeeze()
-                loss = config.regression_loss(preds, batch.e_form)
+                loss = config.regression_loss(preds, batch.e_form, batch.padding_mask)
                 return loss
             else:
                 losses = state.apply_fn(params, batch, ctx=Context(training=True), rngs=rngs)

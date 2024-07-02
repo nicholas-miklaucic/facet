@@ -1,7 +1,7 @@
 batch_size = 63
 do_profile = false
 num_epochs = 100
-regressor = "cogn"
+regressor = "dimenet"
 task = "e_form"
 
 [data]
@@ -12,8 +12,8 @@ shuffle_seed = 1618
 train_split = 22
 test_split = 2
 valid_split = 2
-batch_n_nodes = 1024
-batch_n_edges = 4096
+batch_n_nodes = 512
+batch_n_edges = 9872
 batch_n_graphs = 64
 
 [cli]
@@ -32,7 +32,7 @@ logs_per_epoch = 8
 [train]
 lr_schedule_kind = "cosine"
 start_lr_frac = 0.1
-base_lr = 0.008
+base_lr = 0.004
 end_lr_frac = 0.04
 weight_decay = 0.03
 beta_1 = 0.9
@@ -41,11 +41,20 @@ nestorov = true
 max_grad_norm = 1.0
 
 [cogn]
-node_dim = 256
-edge_dim = 256
+node_dim = 128
+edge_dim = 128
 num_blocks = 5
 node_update_reduction = "mean"
 node_agg_reduction = "mean"
+
+[dimenet]
+num_radial = 8
+num_spherical = 7
+envelope_exp = 6
+cutoff = 7
+species_emb = 64
+edge2node = "mean"
+node2graph = "mean"
 
 [cogn.dist_enc]
 lo = 0
@@ -54,7 +63,7 @@ sd = 1
 emb = 32
 
 [cogn.msg_layer]
-inner_dims = [512]
+inner_dims = []
 activation = "swish"
 final_activation = "Identity"
 dropout = 0.0
@@ -62,18 +71,85 @@ residual = false
 num_heads = 1
 
 [cogn.node_layer]
-inner_dims = [512]
+inner_dims = []
 activation = "swish"
 final_activation = "Identity"
 dropout = 0.0
-residual = true
+residual = false
 num_heads = 1
 
 [cogn.readout_head]
-inner_dims = [256, 128]
+inner_dims = []
 activation = "swish"
 final_activation = "Identity"
 out_dim = 1
+dropout = 0.0
+residual = false
+num_heads = 1
+
+[dimenet.act]
+name = "sigmoid"
+
+[dimenet.initial_embed]
+inner_dims = []
+activation = "swish"
+final_activation = "Identity"
+dropout = 0.0
+residual = false
+num_heads = 1
+
+[dimenet.int_dist_enc]
+inner_dims = []
+activation = "swish"
+final_activation = "Identity"
+dropout = 0.0
+residual = false
+num_heads = 1
+
+[dimenet.int_ang_enc]
+inner_dims = []
+activation = "swish"
+final_activation = "Identity"
+dropout = 0.0
+residual = false
+num_heads = 1
+
+[dimenet.int_down_proj]
+inner_dims = []
+activation = "swish"
+final_activation = "Identity"
+dropout = 0.0
+residual = false
+num_heads = 1
+
+[dimenet.int_up_proj]
+inner_dims = []
+activation = "swish"
+final_activation = "Identity"
+dropout = 0.0
+residual = false
+num_heads = 1
+
+[dimenet.int_pre_skip]
+inner_dims = []
+activation = "swish"
+final_activation = "Identity"
+dropout = 0.0
+residual = false
+num_heads = 1
+
+[dimenet.int_post_skip]
+inner_dims = []
+activation = "swish"
+final_activation = "Identity"
+dropout = 0.0
+residual = false
+num_heads = 1
+
+[dimenet.head]
+inner_dims = []
+activation = "swish"
+final_activation = "Identity"
 dropout = 0.0
 residual = false
 num_heads = 1

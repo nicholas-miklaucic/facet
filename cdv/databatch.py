@@ -12,6 +12,10 @@ class NodeData(struct.PyTreeNode):
     species: Int[Array, 'nodes']
     frac: Float[Array, 'nodes 3']
     cart: Float[Array, 'nodes 3']
+    incoming: Int[Array, 'nodes max_in']
+    incoming_pad: Bool[Array, 'nodes max_in']
+    outgoing: Int[Array, 'nodes max_out']
+    outgoing_pad: Bool[Array, 'nodes max_out']
     graph_i: Int[Array, 'nodes']
 
     @classmethod
@@ -20,7 +24,11 @@ class NodeData(struct.PyTreeNode):
             species=jnp.empty(nodes, dtype=jnp.int16),
             frac=jnp.empty((nodes, 3)),
             cart=jnp.empty((nodes, 3)),
-            graph_i=jnp.empty(nodes, dtype=jnp.int16)
+            incoming=jnp.empty((nodes, 32), dtype=jnp.int16),
+            outgoing=jnp.empty((nodes, 20), dtype=jnp.int16),
+            incoming_pad=jnp.empty((nodes, 32), dtype=jnp.bool),
+            outgoing_pad=jnp.empty((nodes, 20), dtype=jnp.bool),
+            graph_i=jnp.empty(nodes, dtype=jnp.int16),
         )
 
 class EdgeData(struct.PyTreeNode):
@@ -42,6 +50,7 @@ class CrystalData(struct.PyTreeNode):
     dataset_i: Int[Array, 'graphs']
     abc: Float[Array, 'graphs 3']
     angles_rad: Float[Array, 'graphs 3']
+    lat: Float[Array, 'graphs 3 3']
     e_form: Float[Array, 'graphs']
     bandgap: Float[Array, 'graphs']
     e_total: Float[Array, 'graphs']
@@ -68,6 +77,26 @@ class CrystalData(struct.PyTreeNode):
             num_spec=jnp.empty(graphs),
             dataset_i=jnp.empty(graphs)
         )
+    
+    @property
+    def lats(self) -> Float[Array, 'graphs 3 3']:
+        # https://github.com/materialsproject/pymatgen/blob/d1361099331ba6c5217cbfc5a17c77dcdf4918a9/pymatgen/core/lattice.py#L426
+        a, b, c = self.abc.T
+        cos_alpha, cos_beta, cos_gamma = jnp.cos(self.angles_rad).T
+        sin_alpha, sin_beta, sin_gamma = jnp.sin(self.angles_rad).T
+        val = (cos_alpha * cos_beta - cos_gamma) / (sin_alpha * sin_beta + 1e-12)
+        val = jnp.clip(val, -1, 1)  # rounding errors may cause values slightly > 1
+        gamma_star = jnp.arccos(val)
+
+        vector_a = jnp.array([a * sin_beta, 0 * a, a * cos_beta])
+        vector_b = jnp.array([
+            -b * sin_alpha * jnp.cos(gamma_star),
+            b * sin_alpha * jnp.sin(gamma_star),
+            b * cos_alpha,
+        ])
+        vector_c = jnp.array([0 * c, 0 * c, c])
+
+        return jnp.stack([vector_a, vector_b, vector_c], axis=0).transpose(2, 0, 1)
 
 
 class CrystalGraphs(struct.PyTreeNode):
@@ -109,7 +138,11 @@ class CrystalGraphs(struct.PyTreeNode):
         
     def __add__(self, other: 'CrystalGraphs') -> 'CrystalGraphs':
         """Collates both objects together, taking care to deal with index offsets."""        
-        other_nodes = other.nodes.replace(graph_i=other.nodes.graph_i + self.n_total_graphs)
+        other_nodes = other.nodes.replace(
+            graph_i=other.nodes.graph_i + self.n_total_graphs,
+            incoming=other.nodes.incoming + self.n_total_edges,
+            outgoing=other.nodes.outgoing + self.n_total_edges
+        )
         other_edges = other.edges.replace(
             graph_i=other.edges.graph_i + self.n_total_graphs,
             sender=other.edges.sender + self.n_total_nodes,
