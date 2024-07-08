@@ -9,6 +9,7 @@ from cdv.config import MainConfig
 from cdv.dataset import dataloader, load_file
 from cdv.layers import Context
 from cdv.utils import debug_stat, debug_structure, flax_summary
+from cdv.vae import vae_loss
 
 
 # https://bnikolic.co.uk/blog/python/jax/2022/02/22/jax-outputgraph-rev.html
@@ -17,7 +18,7 @@ def to_dot_graph(x):
 
 
 @pyrallis.argparsing.wrap()
-def show_model(config: MainConfig, make_hlo_dot=False):
+def show_model(config: MainConfig, make_hlo_dot=False, do_profile=False):    
     kwargs = dict(ctx=Context(training=True))
     num_batches, dl = dataloader(config, split='train')
     for i, b in zip(range(3), dl):
@@ -27,26 +28,44 @@ def show_model(config: MainConfig, make_hlo_dot=False):
         mod = config.build_regressor()
         enc_batch = {'cg': batch}
         rngs = {}
+    elif config.task == 'vae':
+        mod = config.build_vae()
+        enc_batch = {'cg': batch}
+        rngs = {}
     elif config.task == 'diled':
         mod = config.build_diled()
         enc_batch = {
             'cg': batch,
         }
         rngs = {'noise': jax.random.key(123), 'time': jax.random.key(234)}
-    kwargs.update(enc_batch)
-    out, params = mod.init_with_output(dict(params=jax.random.key(0), **rngs), **kwargs)
-    debug_structure(module=mod, out=out)
+
+    rngs['params'] = jax.random.key(0)
+    for k, v in rngs.items():
+        rngs[k] = jax.device_put(v, list(batch.e_form.devices())[0])
+    kwargs.update(enc_batch)    
+    out, params = mod.init_with_output(rngs, **kwargs)            
+    # print(params['params']['edge_proj']['kernel'].devices())
+    debug_structure(module=mod)
     debug_stat(input=batch, out=out)
+    rngs.pop('params')
     flax_summary(mod, rngs=rngs, **kwargs)
 
     def loss(params):
         preds = mod.apply(params, batch, rngs=rngs, ctx=Context(training=True))
         if config.task == 'e_form':
             return {'loss': config.train.loss.regression_loss(preds, batch.graph_data.e_form.reshape(-1, 1), batch.padding_mask)}
+        elif config.task == 'vae':
+            return vae_loss(config.train.loss, batch, *preds)
         else:
             return preds
-
-    debug_stat(grad=jax.grad(lambda x: jnp.mean(loss(x)['loss']))(params))
+        
+    if do_profile:
+        with jax.profiler.trace('/tmp/jax-trace', create_perfetto_trace=True):
+            val, grad=jax.value_and_grad(lambda x: jnp.mean(loss(x)['loss']))(params)
+            jax.block_until_ready(grad)
+    else:
+        val, grad=jax.value_and_grad(lambda x: jnp.mean(loss(x)['loss']))(params)
+    debug_stat(val=val, grad=grad)
 
     if not make_hlo_dot:
         return
@@ -69,6 +88,5 @@ def show_model(config: MainConfig, make_hlo_dot=False):
         subprocess.run(['sfdp', f, '-Tsvg', '-O', '-x'])
 
 
-if __name__ == '__main__':
-    # with jax.log_compiles():
+if __name__ == '__main__':    
     show_model()

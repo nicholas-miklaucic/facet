@@ -66,6 +66,7 @@ class CrystalData(struct.PyTreeNode):
         return cls(
             abc=jnp.empty((graphs, 3)),
             angles_rad=jnp.empty((graphs, 3)),
+            lat=jnp.empty((graphs, 3, 3)),
             e_form=jnp.empty(graphs),
             bandgap=jnp.empty(graphs),
             e_total=jnp.empty(graphs),
@@ -75,28 +76,8 @@ class CrystalData(struct.PyTreeNode):
             space_group=jnp.empty(graphs),
             magmom=jnp.empty(graphs),
             num_spec=jnp.empty(graphs),
-            dataset_i=jnp.empty(graphs)
+            dataset_i=jnp.empty(graphs, dtype=jnp.int32)
         )
-    
-    @property
-    def lats(self) -> Float[Array, 'graphs 3 3']:
-        # https://github.com/materialsproject/pymatgen/blob/d1361099331ba6c5217cbfc5a17c77dcdf4918a9/pymatgen/core/lattice.py#L426
-        a, b, c = self.abc.T
-        cos_alpha, cos_beta, cos_gamma = jnp.cos(self.angles_rad).T
-        sin_alpha, sin_beta, sin_gamma = jnp.sin(self.angles_rad).T
-        val = (cos_alpha * cos_beta - cos_gamma) / (sin_alpha * sin_beta + 1e-12)
-        val = jnp.clip(val, -1, 1)  # rounding errors may cause values slightly > 1
-        gamma_star = jnp.arccos(val)
-
-        vector_a = jnp.array([a * sin_beta, 0 * a, a * cos_beta])
-        vector_b = jnp.array([
-            -b * sin_alpha * jnp.cos(gamma_star),
-            b * sin_alpha * jnp.sin(gamma_star),
-            b * cos_alpha,
-        ])
-        vector_c = jnp.array([0 * c, 0 * c, c])
-
-        return jnp.stack([vector_a, vector_b, vector_c], axis=0).transpose(2, 0, 1)
 
 
 class CrystalGraphs(struct.PyTreeNode):

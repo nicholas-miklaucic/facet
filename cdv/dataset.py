@@ -1,7 +1,6 @@
 """Code to load the processed data."""
 
 import functools
-from multiprocessing import Pool
 
 from functools import partial
 from os import PathLike
@@ -98,13 +97,12 @@ def dataloader_base(
     # first batch doesn't augment: that's the base on which future augmentations happen. It may make
     # sense in the future to have limited, imperfect augmentations, and we don't want those to be
     # stacked on top of themselves.
-    with jax.default_device(jax.devices('cpu')[0]):        
-        for batch in batch_inds:
-            data_files = [process_raw(byte_data[i], pad=config.data.graph_shape) for i in batch]
-            split_files[batch] = data_files
-            batch_data = split_files[batch]
-            collated = collate(batch_data)
-            yield jax.device_put(collated, device)
+    for batch in batch_inds:
+        data_files = [process_raw(byte_data[i], pad=config.data.graph_shape) for i in batch]
+        split_files[batch] = data_files
+        batch_data = split_files[batch]
+        collated = collate(batch_data)
+        yield jax.device_put(collated, device)
 
     while infinite:
         batch_inds = np.split(
@@ -137,11 +135,12 @@ def num_elements_class(batch):
 
 if __name__ == '__main__':
     from cdv.config import MainConfig
+    import numpy as np
     config = pyrallis.parse(config_class=MainConfig)
     config.cli.set_up_logging()
 
     f1 = load_file(config, 300)    
-    debug_structure(conf=f1)
+    debug_stat(conf=f1)
 
     from tqdm import tqdm
 
@@ -149,14 +148,18 @@ if __name__ == '__main__':
 
     dens = []
     e_forms = []
+    n_nodes = []
     for _i in tqdm(np.arange(steps_per_epoch * 2)):
         batch = next(dl)
         dens.append(batch.graph_data.density.mean())
         e_forms.append(batch.graph_data.e_form.mean())
+        n_nodes.extend(batch.n_node.tolist())
 
+    print(batch.graph_data.density.devices())
 
     debug_structure(conf=next(dl))
 
     print(jnp.mean(jnp.array(dens)))
     print(jnp.array(e_forms).mean())
+    print(np.unique(n_nodes, return_counts=True))
 

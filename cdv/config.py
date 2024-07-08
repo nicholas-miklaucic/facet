@@ -18,10 +18,11 @@ from cdv import layers
 from cdv.diffusion import DiffusionBackbone, DiffusionModel, DiT, KumaraswamySchedule
 from cdv.diled import Category, DiLED, EFormCategory, EncoderDecoder, SpaceGroupCategory
 from cdv.encoder import Downsample, ReduceSpeciesEmbed, SpeciesEmbed
-from cdv.gnn import GN, Bessel1DBasis, Bessel2DBasis, DimeNetPP, DimeNetPPOutput, GaussBasis, InputEncoder, LearnedSpecEmb, MLPMessagePassing, NodeAggReadout, SegmentReduction, TripletAngleEmbedding
+from cdv.gnn import GN, Bessel1DBasis, Bessel2DBasis, DimeNetPP, DimeNetPPOutput, Fishnet, GaussBasis, InputEncoder, LearnedSpecEmb, MLPMessagePassing, NodeAggReadout, SegmentReduction, TripletAngleEmbedding
 from cdv.layers import Identity, LazyInMLP, MLPMixer
 from cdv.mlp_mixer import MLPMixerRegressor, O3ImageEmbed
 from cdv.utils import ELEM_VALS
+from cdv.vae import VAE, AggMLP, Encoder
 
 pyrallis.set_config_type('toml')
 
@@ -169,7 +170,9 @@ class DeviceConfig:
     def __post_init__(self):
         import os
 
-        os.environ['XLA_FLAGS'] = '--xla_force_host_platform_device_count=4'
+        os.environ['XLA_FLAGS'] = (
+                '--xla_force_host_platform_device_count=4'
+        )
 
         import jax
 
@@ -247,6 +250,21 @@ class GaussBasisConfig:
     def build(self) -> GaussBasis:
         return GaussBasis(self.lo, self.hi, self.sd, self.emb)
 
+@dataclass
+class SegmentReductionConfig:
+    reduction: str = 'mean'
+    kind: str = 'simple'
+    fishnet_mod: MLPConfig = field(default_factory=lambda: MLPConfig(out_dim=None))
+    fishnet_inner: int = 32
+
+    def build(self) -> SegmentReduction:
+        if self.kind == 'fishnet':
+            return Fishnet(self.reduction, net_templ=self.fishnet_mod.build(), inner_dim=self.fishnet_inner)
+        elif self.kind == 'simple':
+            return SegmentReduction(self.reduction)
+        else:
+            raise ValueError('Unknown kind')
+
 
 @dataclass
 class CoGNConfig:
@@ -263,9 +281,9 @@ class CoGNConfig:
     # Number of processing blocks.
     num_blocks: int = 5
     # Reduction for node update.
-    node_update_reduction: str = 'mean'
+    node_update_reduction: SegmentReductionConfig = field(default_factory=SegmentReductionConfig)
     # Node reduction for readout.
-    node_agg_reduction: str = 'mean'
+    node_agg_reduction: SegmentReductionConfig = field(default_factory=SegmentReductionConfig)
     # Readout head
     readout_head: MLPConfig = field(default_factory=lambda: MLPConfig(out_dim=1))
     
@@ -276,7 +294,7 @@ class CoGNConfig:
             LearnedSpecEmb(num_species, self.node_dim)
         )        
         block_templ = MLPMessagePassing(
-            node_reduction=self.node_update_reduction,
+            node_reduction=self.node_update_reduction.build(),
             node_emb=self.node_dim,
             msg_dim=self.node_dim,
             msg_templ=self.msg_layer.build(),
@@ -311,13 +329,18 @@ class SpeciesEmbedConfig:
         )
     
 
+
+    
+
 @dataclass
 class DimeNetPPConfig:
     num_radial: int = 8
     num_spherical: int = 7
-    envelope_exp: int = 6
+    envelope_exp: int = 6    
     cutoff: float = 7
+    freq_trainable: bool = True
     species_emb: int = 64
+    num_interaction_blocks: int = 4
     act: Layer = field(default_factory=lambda: Layer('sigmoid'))
     initial_embed: MLPConfig = field(default_factory=lambda: MLPConfig(out_dim=None))
     int_dist_enc: MLPConfig = field(default_factory=lambda: MLPConfig(out_dim=None))
@@ -326,24 +349,25 @@ class DimeNetPPConfig:
     int_up_proj: MLPConfig = field(default_factory=lambda: MLPConfig(out_dim=None))
     int_pre_skip: MLPConfig = field(default_factory=lambda: MLPConfig(out_dim=None))
     int_post_skip: MLPConfig = field(default_factory=lambda: MLPConfig(out_dim=None))
-    edge2node: str = 'mean'
-    node2graph: str = 'mean'
+    edge2node: SegmentReductionConfig = field(default_factory=SegmentReductionConfig)
+    node2graph: SegmentReductionConfig = field(default_factory=SegmentReductionConfig)
     head: MLPConfig = field(default_factory=lambda: MLPConfig(out_dim=None))
 
     def build(self, num_species: int) -> DimeNetPP:
-        distance_enc = Bessel1DBasis(num_basis=self.num_radial, cutoff=self.cutoff, envelope_exp=self.envelope_exp)
+        distance_enc = Bessel1DBasis(num_basis=self.num_radial, cutoff=self.cutoff, envelope_exp=self.envelope_exp, freq_trainable=self.freq_trainable)
 
         return DimeNetPP(
             input_enc=InputEncoder(distance_enc=distance_enc.copy(), distance_projector=Identity(), species_emb=LearnedSpecEmb(num_specs=num_species, embed_dim=self.species_emb)),
             sbf=TripletAngleEmbedding(Bessel2DBasis(num_radial=self.num_radial, num_spherical=self.num_spherical, cutoff=self.cutoff, envelope_exp=self.envelope_exp)),
-            initial_embed_mlp=LazyInMLP([]),
-            output=DimeNetPPOutput(head=LazyInMLP([]), edge2node=self.edge2node, node2graph=self.node2graph),
-            int_dist_enc=LazyInMLP([]),
-            int_ang_enc=LazyInMLP([]),
-            int_down_proj_mlp=LazyInMLP([]),
-            int_up_proj_mlp=LazyInMLP([]),
-            int_pre_skip_mlp=LazyInMLP([]),
-            int_post_skip_mlp=LazyInMLP([])
+            initial_embed_mlp=self.initial_embed.build(),
+            output=DimeNetPPOutput(head=self.head.build(), edge2node=self.edge2node.build(), node2graph=self.node2graph.build()),
+            int_dist_enc=self.int_dist_enc.build(),
+            int_ang_enc=self.int_ang_enc.build(),
+            int_down_proj_mlp=self.int_down_proj.build(),
+            int_up_proj_mlp=self.int_up_proj.build(),
+            int_pre_skip_mlp=self.int_pre_skip.build(),
+            int_post_skip_mlp=self.int_post_skip.build(),
+            num_interaction_blocks=self.num_interaction_blocks
         )
 
 
@@ -351,21 +375,29 @@ class DimeNetPPConfig:
 class RegressionLossConfig:
     """Config defining the loss function."""
 
-    # delta for smooth_l1_loss. delta = 0 is L1 loss, and high delta behaves like L2 loss.
-    loss_delta: float = 0.1
+    # delta for smoother_l1_loss: the switch point between the smooth version and pure L1 loss.
+    loss_delta: float = 1 / 64
 
     # Whether to use RMSE loss instead.
     use_rmse: bool = False
 
+    def smoother_l1_loss(self, preds, targets):
+        a = -5 / 2 / 8
+        b = 63 / 8 / 6
+        c = -35 / 4 / 4
+        d = 35 / 8 / 2
+        x = (preds - targets) / self.loss_delta
+        x2 = x * x
+        x_abs = jnp.abs(x)
+        y = jnp.where(x_abs < 1, x2 * d + (x2 * c + (x2 * b + (x2 * a))), x_abs)
+        return y * self.loss_delta
+
     def regression_loss(self, preds, targets, mask):
         mask = mask.reshape(preds.shape)
-        return jax.lax.cond(
-            self.use_rmse,
-            lambda: jnp.sqrt(optax.losses.squared_error(preds, targets).mean(where=mask)),
-            lambda: (
-                optax.losses.huber_loss(preds, targets, delta=self.loss_delta) / self.loss_delta
-            ).mean(where=mask),
-        )
+        if self.use_rmse:
+            return jnp.sqrt(optax.losses.squared_error(preds, targets).mean(where=mask))
+        else:
+            return self.smoother_l1_loss(preds, targets).mean(where=mask)
 
 
 @dataclass
@@ -435,7 +467,7 @@ class TrainingConfig:
                 weight_decay=self.weight_decay,
                 nesterov=self.nestorov,
             ),
-            optax.clip_by_global_norm(self.max_grad_norm),
+            optax.clip_by_block_rms(self.max_grad_norm),
         )
 
 
@@ -448,7 +480,7 @@ class MainConfig:
     do_profile: bool = False
 
     # Number of epochs.
-    num_epochs: int = 100
+    num_epochs: int = 20
 
     # Folder to initialize all parameters from, if the folder exists.
     restart_from: Optional[Path] = None
@@ -501,6 +533,14 @@ class MainConfig:
     #         mixer=self.build_mlp().mixer,
     #     )
     #     return self.diffusion.diffusion.build(diffuser)
+
+    def build_vae(self):
+        cogn = self.cogn.build(self.data.num_species)
+        latent_dim = 512
+        return VAE(
+            encoder=Encoder(input_enc=cogn.input_enc, num_blocks=cogn.num_blocks, block_templ=cogn.block_templ, latent_dim=latent_dim, head=LazyInMLP([512, 1024, 1024], dropout_rate=0.2)),
+            agg_mlp=AggMLP(mlp=LazyInMLP([512, 1024, 1024], dropout_rate=0.2))
+        )
 
     def build_regressor(self):
         if self.regressor == 'cogn':

@@ -1,0 +1,147 @@
+batch_size = 63
+do_profile = false
+num_epochs = 20
+regressor = "dimenet"
+task = "e_form"
+
+[data]
+dataset_name = "jarvis_dft3d_cleaned"
+raw_data_folder = "data"
+data_folder = "precomputed"
+shuffle_seed = 1618
+train_split = 18
+test_split = 2
+valid_split = 6
+batch_n_nodes = 512
+batch_n_edges = 9872
+batch_n_graphs = 64
+
+[cli]
+verbosity = "info"
+show_progress = true
+
+[device]
+device = "gpu"
+max_gpus = 1
+gpu_ids = [1]
+
+[log]
+log_dir = "logs"
+logs_per_epoch = 8
+
+[train]
+lr_schedule_kind = "cosine"
+start_lr_frac = 0.1
+base_lr = 0.001
+end_lr_frac = 0.04
+weight_decay = 0.1
+beta_1 = 0.9
+beta_2 = 0.999
+nestorov = true
+max_grad_norm = 1.0
+
+[dimenet]
+num_radial = 8
+num_spherical = 7
+envelope_exp = 6
+cutoff = 7
+freq_trainable = false
+species_emb = 128
+num_interaction_blocks = 4
+
+[dimenet.edge2node]
+reduction = "mean"
+kind = "simple"
+fishnet_inner = 32
+
+[dimenet.node2graph]
+reduction = "mean"
+kind = "simple"
+fishnet_inner = 32
+
+[dimenet.edge2node.fishnet_mod]
+inner_dims = []
+activation = "swish"
+final_activation = "Identity"
+dropout = 0.0
+residual = false
+num_heads = 1
+
+[dimenet.node2graph.fishnet_mod]
+inner_dims = []
+activation = "swish"
+final_activation = "Identity"
+dropout = 0.0
+residual = false
+num_heads = 1
+
+[dimenet.act]
+name = "sigmoid"
+
+[dimenet.initial_embed]
+inner_dims = [256]
+activation = "swish"
+final_activation = "Identity"
+dropout = 0.0
+residual = false
+num_heads = 1
+
+[dimenet.int_dist_enc]
+inner_dims = [64]
+activation = "swish"
+final_activation = "Identity"
+dropout = 0.0
+residual = false
+num_heads = 1
+
+[dimenet.int_ang_enc]
+inner_dims = [64]
+activation = "swish"
+final_activation = "Identity"
+dropout = 0.0
+residual = false
+num_heads = 1
+
+[dimenet.int_down_proj]
+inner_dims = []
+activation = "swish"
+final_activation = "Identity"
+dropout = 0.0
+residual = false
+num_heads = 1
+
+[dimenet.int_up_proj]
+inner_dims = []
+activation = "swish"
+final_activation = "Identity"
+dropout = 0.0
+residual = false
+num_heads = 1
+
+[dimenet.int_pre_skip]
+inner_dims = [128, 128]
+activation = "swish"
+final_activation = "Identity"
+dropout = 0.0
+residual = false
+num_heads = 1
+
+[dimenet.int_post_skip]
+inner_dims = [128, 128]
+activation = "swish"
+final_activation = "Identity"
+dropout = 0.0
+residual = false
+num_heads = 1
+
+[dimenet.head]
+inner_dims = [512, 512, 256]
+activation = "swish"
+final_activation = "Identity"
+dropout = 0.0
+residual = false
+num_heads = 1
+
+[train.loss.reg_loss]
+loss_delta = 0.015625
+use_rmse = false

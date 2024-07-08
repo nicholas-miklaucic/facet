@@ -9,6 +9,12 @@ dataset_name = "jarvis_dft3d_cleaned"
 raw_data_folder = "data"
 data_folder = "precomputed"
 shuffle_seed = 1618
+train_split = 22
+test_split = 2
+valid_split = 2
+batch_n_nodes = 512
+batch_n_edges = 9872
+batch_n_graphs = 64
 
 [cli]
 verbosity = "info"
@@ -25,7 +31,7 @@ logs_per_epoch = 8
 
 [train]
 lr_schedule_kind = "cosine"
-start_lr_frac = 0.1
+start_lr_frac = 0.5
 base_lr = 0.004
 end_lr_frac = 0.04
 weight_decay = 0.03
@@ -34,12 +40,14 @@ beta_2 = 0.999
 nestorov = true
 max_grad_norm = 1.0
 
+[train.loss.reg_loss]
+loss_delta = 0.015625
+use_rmse = false
+
 [cogn]
-node_dim = 128
-edge_dim = 128
-num_blocks = 5
-node_update_reduction = "sum"
-node_agg_reduction = "mean"
+node_dim = 256
+edge_dim = 256
+num_blocks = 3
 
 [cogn.dist_enc]
 lo = 0
@@ -48,10 +56,11 @@ sd = 1
 emb = 32
 
 [cogn.msg_layer]
-inner_dims = [128, 128, 128, 128]
+inner_dims = [128, 256]
 activation = "swish"
 final_activation = "Identity"
 dropout = 0.0
+residual = false
 num_heads = 1
 
 [cogn.node_layer]
@@ -59,18 +68,40 @@ inner_dims = []
 activation = "swish"
 final_activation = "Identity"
 dropout = 0.0
-residual = true
+residual = false
+num_heads = 1
+
+[cogn.node_update_reduction]
+reduction = "mean"
+kind = "simple"
+fishnet_inner = 32
+
+[cogn.node_update_reduction.fishnet_mod]
+inner_dims = [256]
+activation = "swish"
+final_activation = "Identity"
+dropout = 0.0
+residual = false
+num_heads = 1
+
+[cogn.node_agg_reduction]
+reduction = "mean"
+kind = "simple"
+fishnet_inner = 32
+
+[cogn.node_agg_reduction.fishnet_mod]
+inner_dims = [256]
+activation = "swish"
+final_activation = "Identity"
+dropout = 0.0
+residual = false
 num_heads = 1
 
 [cogn.readout_head]
-inner_dims = []
+inner_dims = [256, 256]
 activation = "swish"
 final_activation = "Identity"
 out_dim = 1
 dropout = 0.0
 residual = false
 num_heads = 1
-
-[train.loss.reg_loss]
-loss_delta = 0.1
-use_rmse = false

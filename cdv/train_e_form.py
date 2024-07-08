@@ -13,5 +13,4 @@ def train_e_form(config: MainConfig):
 
 
 if __name__ == '__main__':
-    # with jax.log_compiles():
     train_e_form()

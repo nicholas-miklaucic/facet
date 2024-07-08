@@ -27,6 +27,7 @@ from cdv.config import LossConfig, MainConfig
 from cdv.dataset import CrystalGraphs, dataloader
 from cdv.layers import Context
 from cdv.utils import item_if_arr
+from cdv.vae import vae_loss
 
 @struct.dataclass
 class Metrics:
@@ -96,11 +97,6 @@ class TrainingRun:
         self.model = self.make_model()
         self.metrics = Metrics()
 
-        if config.restart_from is not None:
-            self.state = self.state.replace(
-                params=best_ckpt(config.restart_from)['state']['params']
-            )
-
         opts = ocp.CheckpointManagerOptions(
             save_interval_steps=1,
             best_fn=lambda metrics: metrics['te_loss'],
@@ -127,6 +123,12 @@ class TrainingRun:
             rmse = jnp.sqrt(optax.losses.squared_error(preds, batch.e_form).mean(where=batch.padding_mask))
             metric_updates = dict(
                 mae=mae, loss=loss, rmse=rmse, grad_norm=state.last_grad_norm
+            )
+        elif task == 'vae':
+            preds = state.apply_fn(state.params, batch, ctx=Context(training=False), rngs=rng)            
+            loss_dict = vae_loss(config, batch, *preds)
+            metric_updates = dict(
+                grad_norm=state.last_grad_norm, **loss_dict
             )
         elif task == 'diled':
             losses = state.apply_fn(state.params, batch, ctx=Context(training=False), rngs=rng)
@@ -156,6 +158,9 @@ class TrainingRun:
                 preds = state.apply_fn(params, batch, ctx=Context(training=True), rngs=rngs).squeeze()
                 loss = config.regression_loss(preds, batch.e_form, batch.padding_mask)
                 return loss
+            elif task == 'vae':
+                preds = state.apply_fn(params, batch, ctx=Context(training=True), rngs=rngs)
+                return vae_loss(config, batch, *preds)['loss'].mean()
             else:
                 losses = state.apply_fn(params, batch, ctx=Context(training=True), rngs=rngs)
                 return losses['loss'].mean()
@@ -171,6 +176,8 @@ class TrainingRun:
             return self.config.build_diled()
         elif self.config.task == 'e_form':
             return self.config.build_regressor()
+        elif self.config.task == 'vae':
+            return self.config.build_vae()
         else:
             raise ValueError
 
@@ -188,6 +195,11 @@ class TrainingRun:
                 rng=self.rng,
                 batch=batch
             )
+
+            if self.config.restart_from is not None:
+                self.state = self.state.replace(
+                    params=best_ckpt(self.config.restart_from)['state']['params']
+                )
         elif step >= self.num_steps:
             return None
 
@@ -224,9 +236,17 @@ class TrainingRun:
             self.metrics_history['step'].append(self.curr_step)
             self.metrics_history['epoch'].append(self.curr_step / self.steps_in_epoch)
             self.metrics_history['rel_mins'].append((time.monotonic() - self.start_time) / 60)
-            self.metrics_history['throughput'].append(
-                self.curr_step * self.config.batch_size / self.metrics_history['rel_mins'][-1]
-            )
+            if max(self.metrics_history['epoch'], default=0) < 1:
+                self.metrics_history['throughput'].append(
+                    self.curr_step * self.config.batch_size / self.metrics_history['rel_mins'][-1]
+                )
+            else:
+                prev, curr = self.metrics_history['rel_mins'][-2:]                
+                min_delta = curr - prev
+
+                prev, curr = self.metrics_history['step'][-2:]
+                size = (curr - prev) * self.config.batch_size
+                self.metrics_history['throughput'].append(size / min_delta)
 
         # print(self.metrics_history)
 

@@ -142,9 +142,7 @@ class StatsVisitor(TreeVisitor):
             else:
                 x = np.array(flat)
         else:
-            sampling = True            
-            # really big arrays can be sampled more loosely
-            overflow = max(2, round(np.log10(size) / np.log10(self.sample_size)))
+            sampling = True
             
             # n^2 + 1 tends to have fewer factors: should capture most slices
             inds = jnp.arange(np.floor(np.sqrt(size - 1)) + 1, dtype=jnp.int64) ** 2 + 1
@@ -160,7 +158,7 @@ class StatsVisitor(TreeVisitor):
                 x = x / 10 ** factor
                 summary += f' E{factor}'
             else:
-                factor = 1
+                factor = 0
             summary = f'{fmt(mu / 10 ** factor)} ± {fmt(sd / 10 ** factor)}' + summary
         else:
             zeros = np.mean(x == 0)            

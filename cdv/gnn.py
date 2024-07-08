@@ -1,6 +1,6 @@
 """Functionality for graph neural networks."""
 from gc import garbage
-from typing import Callable, Literal
+from typing import Callable, Literal, Optional
 import eins.reduction
 from flax import struct
 from flax import linen as nn
@@ -15,7 +15,7 @@ import pyrallis
 
 
 from cdv.databatch import CrystalGraphs
-from cdv.dataset import load_file
+from cdv.dataset import dataloader, load_file
 from cdv.layers import Context, Identity, LazyInMLP
 from cdv.utils import debug_stat, debug_structure, flax_summary
 
@@ -90,7 +90,7 @@ class Envelope(nn.Module):
 
     def __call__(self, x):
         # our model shouldn't return nan, even for 0 input, so we have to change this
-        return 1 - x ** self.p * (self.a + x * (self.b + x * self.c))
+        return 1 + x ** self.p * (self.a + x * (self.b + x * self.c))
 
 
 class Bessel1DBasis(DistanceEncoder):
@@ -99,11 +99,16 @@ class Bessel1DBasis(DistanceEncoder):
     cutoff: float = 7
     # Controls how fast the envelope goes to 0 at the cutoff.
     envelope_exp: int = 6
+    freq_trainable: bool = True
 
     def setup(self):
         def freq_init(rng):
             return jnp.arange(self.num_basis, dtype=jnp.float32) + 1
-        self.freq = self.param('freq', freq_init)
+        
+        if self.freq_trainable:
+            self.freq = self.param('freq', freq_init)
+        else:
+            self.freq = freq_init(None)
         self.envelope = Envelope(self.envelope_exp)
 
     def __call__(self, x, ctx: Context):
@@ -118,8 +123,7 @@ class Bessel1DBasis(DistanceEncoder):
 
         e_d = jnp.sqrt(2 / self.cutoff) * jnp.sinc(self.freq * dist) * (jnp.pi * self.freq / self.cutoff)
 
-        debug_stat(e_d=e_d, env=env, dist=dist)
-        x123
+        # debug_stat(e_d=e_d, env=env, dist=dist)        
         return env * e_d
 
 
@@ -169,15 +173,14 @@ class InputEncoder(nn.Module):
     species_emb: SpeciesEmbedding
 
     def __call__(self, cg: CrystalGraphs, ctx: Context) -> Graphs:
-        send_pos = cg.nodes.cart[cg.senders]
-        print(cg.graph_data.lats[10], cg.graph_data.dataset_i[10])
-        offsets = EinsOp('e abc xyz, e abc -> e xyz')(cg.graph_data.lats[cg.edges.graph_i], cg.edges.to_jimage)
+        send_pos = cg.nodes.cart[cg.senders]        
+        offsets = EinsOp('e abc xyz, e abc -> e xyz')(cg.graph_data.lat[cg.edges.graph_i], cg.edges.to_jimage)
         recv_pos = cg.nodes.cart[cg.receivers] + offsets
 
         vecs = recv_pos - send_pos
 
         dist = EinsOp('edge 3 -> edge', reduce='l2_norm')(vecs)
-        debug_stat(dist=dist)
+        # debug_stat(dist=dist)
         dist_emb = self.distance_projector(self.distance_enc(dist, ctx))
         # debug_structure(dist=dist, dist_emb=dist_emb)
 
@@ -214,14 +217,12 @@ class InputEncoder(nn.Module):
 
 #     return jnp.arccos(jnp.dot(ab, cb))
 
-
+SegmentReductionKind = Literal['max', 'min', 'prod', 'sum', 'mean']
 
 def segment_mean(data, segment_ids, **kwargs):
     return jax.ops.segment_sum(data, segment_ids, **kwargs) / (1e-6 + jax.ops.segment_sum(jnp.ones_like(data), segment_ids, **kwargs))
 
-SegmentReduction = Literal['max', 'min', 'prod', 'sum', 'mean']
-
-def segment_reduce(reduction: SegmentReduction, data, segment_ids, **kwargs):
+def segment_reduce(reduction: SegmentReductionKind, data, segment_ids, **kwargs):
     try:
         fn = getattr(jax.ops, f'segment_{reduction}')
     except AttributeError:
@@ -231,6 +232,91 @@ def segment_reduce(reduction: SegmentReduction, data, segment_ids, **kwargs):
             raise ValueError('Cannot find reduction')
 
     return fn(data, segment_ids, **kwargs)
+
+
+class SegmentReduction(nn.Module):
+    reduction: SegmentReductionKind = 'sum'
+
+    def __call__(self, data, segments, num_segments, ctx):
+        return segment_reduce(self.reduction, data, segments, num_segments=num_segments)
+    
+
+class Fishnet(SegmentReduction):
+    net_templ: LazyInMLP = LazyInMLP([])
+    inner_dim: Optional[int] = None
+    out_dim: Optional[int] = None
+    
+    @nn.compact
+    def __call__(self, data, segments, num_segments, ctx):
+        if self.reduction not in ('sum', 'mean'):
+            raise ValueError('Invalid reduction for fishnet')
+        
+    
+        out_dim = self.out_dim or data.shape[-1]
+        inner_dim = self.inner_dim or out_dim
+
+        # if out_dim = o
+        # score has o elements
+        # F is o x o, but the Cholesky decomposition is just o(o + 1)/2
+        net_out_dim = (inner_dim * (inner_dim + 1)) // 2 + inner_dim
+
+        net = self.net_templ.copy(
+            out_dim=net_out_dim,
+            kernel_init=nn.initializers.normal()
+        )
+
+        net_output = net(data, ctx)
+
+        # split into t and F_chol
+        t = net_output[..., :inner_dim]
+        F_chol = net_output[..., inner_dim:]
+
+        def un_chol(y):
+            L = jnp.zeros((inner_dim, inner_dim), dtype=y.dtype)
+            L = L.at[jnp.tril_indices_from(L)].set(jax.nn.tanh(y))
+            # softplus to ensure these are positive
+            diag = jnp.diag_indices_from(L)
+            L = L.at[diag].set(jax.nn.softplus(L[diag]))
+            return L @ L.T
+        
+        F = jax.vmap(un_chol)(F_chol.reshape(-1, F_chol.shape[-1]))
+        F = F.reshape(*F_chol.shape[:-1], inner_dim, inner_dim)
+
+        F_reduced = SegmentReduction(self.reduction)(F, segments, num_segments, ctx)
+        t_reduced = SegmentReduction(self.reduction)(t, segments, num_segments, ctx)
+
+        # debug_structure(F=F_reduced)
+        # debug_stat(F=F_reduced)
+
+        # empty segments will have all 0s, which will cause a divide by 0
+        # because any all-0 will also have all-0 score, the multiplication will reset them, so we
+        # just need to set them to anything that won't error
+
+        missing = (jnp.abs(t_reduced) < 0.1).all(axis=-1) & (jnp.abs(F_reduced) < 0.1).all(axis=(-2, -1))
+
+        # There are a lot of numerical stabilty problems here. If the inverse is too small, the
+        # gradient is all over the place. Adding 1 to the diagonals solves this, although it doesn't
+        # really do what it's supposed to any more.
+
+        # F_masked = F_reduced + missing[:, None, None] * jnp.eye(inner_dim, inner_dim)
+        F_masked = F_reduced + jnp.eye(inner_dim, inner_dim)
+
+        # print(F_masked.sum(axis=(-1, -2)))
+        # print(missing)
+
+        F_inv = jax.vmap(jnp.linalg.inv)(F_masked)
+        # F_inv = F_masked
+
+        # debug_stat(F=F_reduced, F_m=F_masked, F_inv=F_inv)
+
+        theta = jnp.einsum('...ij,...j->...j', F_inv, t_reduced)
+
+        if inner_dim != out_dim:
+            theta = nn.Dense(out_dim, use_bias=False, name='proj')(theta)
+
+        return theta
+
+
 
 class ProcessingBlock(nn.Module):
     """Block that processes graphs."""
@@ -261,9 +347,7 @@ class MessagePassing(ProcessingBlock):
 
         # aggregate incoming messages for each node
         # shape nodes msg_dim
-        node_messages = segment_reduce(self.node_reduction, edge_messages, g.receivers, num_segments=g.n_total_nodes)
-
-        debug_structure(g)
+        node_messages = self.node_reduction(edge_messages, g.receivers, num_segments=g.n_total_nodes, ctx=ctx)
 
         node_emb = jax.vmap(self.node_update, in_axes=(0, 0, None))(g.node_emb, node_messages, ctx)
         return g.replace(node_emb=node_emb)
@@ -298,14 +382,14 @@ class Readout(nn.Module):
 class NodeAggReadout(Readout):
     """Aggregates node features."""    
     head: nn.Module
-    graph_reduction: SegmentReduction = 'mean'    
+    graph_reduction: SegmentReduction = SegmentReduction('mean')
 
     def node_transform(self, node: Float[Array, 'node_emb'], ctx: Context) -> Float[Array, 'node_reduce_emb']:
         return node
     
     def __call__(self, g: Graphs, ctx: Context) -> Float[Array, 'graphs out_dim']:
         transformed = jax.vmap(self.node_transform, in_axes=(0, None))(g.node_emb, ctx)
-        graph_embs = segment_reduce(self.graph_reduction, transformed, g.node_graph_i, num_segments=g.n_total_graphs)
+        graph_embs = self.graph_reduction(transformed, g.node_graph_i, num_segments=g.n_total_graphs, ctx=ctx)
         return self.head(graph_embs, ctx=ctx)
     
 
@@ -348,8 +432,8 @@ class TripletAngleEmbedding(nn.Module):
 
 class DimeNetPPOutput(nn.Module):
     head: LazyInMLP   
-    edge2node: SegmentReduction = 'mean'
-    node2graph: SegmentReduction = 'mean'
+    edge2node: SegmentReduction = SegmentReduction('mean')
+    node2graph: SegmentReduction = SegmentReduction('mean')
     out_dim: int = 1    
     @nn.compact
     def __call__(self, base_g: Graphs, g: Graphs, ctx: Context) -> Float[Array, 'graphs out_dim']:
@@ -358,12 +442,12 @@ class DimeNetPPOutput(nn.Module):
 
         lin_rbf = dist_proj(base_g.edge_emb)
         edge_msgs = g.edge_emb * lin_rbf
-        node_msgs = segment_reduce(self.edge2node, edge_msgs, g.receivers, num_segments=g.n_total_nodes)
+        node_msgs = self.edge2node(edge_msgs, g.receivers, num_segments=g.n_total_nodes, ctx=ctx)
 
         head = self.head.copy(out_dim=self.out_dim, name='out_head')
         
         node_outs = head(node_msgs, ctx)
-        graph_outs = segment_reduce(self.node2graph, node_outs, g.node_graph_i, num_segments=g.n_total_graphs)
+        graph_outs = self.node2graph(node_outs, g.node_graph_i, num_segments=g.n_total_graphs, ctx=ctx)
 
         return graph_outs
 
@@ -379,6 +463,7 @@ class DimeNetPP(nn.Module):
     int_pre_skip_mlp: LazyInMLP
     int_post_skip_mlp: LazyInMLP
     
+    msg_reduction: SegmentReduction = SegmentReduction('mean')
     
     act: Callable = nn.sigmoid
     out_dim: int = 1
@@ -390,9 +475,9 @@ class DimeNetPP(nn.Module):
     @nn.compact
     def __call__(self, cg: CrystalGraphs, ctx: Context) -> Float[Array, 'graphs out_dim']:
         g = self.input_enc(cg, ctx)
-        a_sbf = self.sbf(g, ctx) # nodes in out emb
+        a_sbf = self.sbf(g, ctx).astype(jnp.bfloat16) # nodes in out emb
 
-        debug_stat(e_rbf=g.edge_emb, a_sbf=a_sbf)
+        # debug_stat(e_rbf=g.edge_emb, a_sbf=a_sbf)
 
         # first, generate initial message embeddings
         edge_proj = nn.Dense(self.initial_embed_distance_dim, use_bias=False, name='edge_proj')        
@@ -415,8 +500,8 @@ class DimeNetPP(nn.Module):
             
         for i, output_block in enumerate(output_blocks[1:]):
             # interaction
-            z_rbf = self.int_dist_enc.copy(out_dim=self.message_dim, name=f'int_dist_enc_{i}')(g.edge_emb, ctx) # edges msg_dim
-            msg_proj = self.act(nn.Dense(self.message_dim, name=f'msg_proj_{i}')(curr_g.edge_emb)) # edges msg_dim
+            z_rbf = self.int_dist_enc.copy(out_dim=self.message_dim, name=f'int_dist_enc_{i}')(g.edge_emb, ctx).astype(jnp.bfloat16) # edges msg_dim
+            msg_proj = self.act(nn.Dense(self.message_dim, name=f'msg_proj_{i}')(curr_g.edge_emb)).astype(jnp.bfloat16) # edges msg_dim
 
             # Hadamard multiplication of z_ji and msg_kj
             z_ji = jnp.take(z_rbf, g.outgoing, axis=0)  # nodes out msg_dim
@@ -424,9 +509,9 @@ class DimeNetPP(nn.Module):
 
             msg_dist = EinsOp('nodes out msg, nodes in msg -> nodes in out msg')(z_ji, m_kj)
 
-            msg_dist_down_proj = self.int_down_proj_mlp.copy(out_dim=self.down_proj_dim, name=f'int_down_proj_{i}')(msg_dist, ctx) # nodes in out down            
+            msg_dist_down_proj = self.int_down_proj_mlp.copy(out_dim=self.down_proj_dim, name=f'int_down_proj_{i}')(msg_dist, ctx) # nodes in out down
             z_sbf = self.int_ang_enc.copy(out_dim=self.down_proj_dim, name=f'int_ang_enc_{i}')(a_sbf, ctx) # nodes in out down
-            z_sbf = z_sbf * g.incoming_pad[..., None, None]  # zero out contributions from padding edges            
+            z_sbf = z_sbf * g.incoming_pad[..., None, None]  # zero out contributions from padding edges
 
             msg_all_down = EinsOp('nodes in out down, nodes in out down -> nodes out down')(msg_dist_down_proj, z_sbf)
             msg_all = self.act(nn.Dense(self.message_dim, name=f'int_up_proj_{i}')(msg_all_down))  # nodes out msg_dim
@@ -436,7 +521,7 @@ class DimeNetPP(nn.Module):
 
             prev_msg_enc = self.act(nn.Dense(self.message_dim, name=f'int_prev_msg_{i}')(curr_g.edge_emb))
 
-            combo_msg = prev_msg_enc + segment_reduce('sum', msg_all, g.outgoing.reshape(-1), num_segments=g.n_total_edges)
+            combo_msg = prev_msg_enc + self.msg_reduction(msg_all, g.outgoing.reshape(-1), num_segments=g.n_total_edges, ctx=ctx)
 
             pre_skip = self.int_pre_skip_mlp.copy(out_dim=self.message_dim, name=f'int_pre_skip_{i}')(combo_msg, ctx)
 
@@ -447,29 +532,6 @@ class DimeNetPP(nn.Module):
             outs = outs + output_block(g, curr_g, ctx)
 
         return outs
-
-
-
-
-class Edge2NodeAgg(ProcessingBlock):
-    """
-    Dimenet++ output block. Aggregates edge embeddings together. 
-    """
-    distance_embed_dim: int    
-    head: LazyInMLP
-    edge_to_node: SegmentReduction = 'mean'
-
-    @nn.compact
-    def __call__(self, g: Graphs, ctx: Context) -> Graphs:
-        total_hidden_dim = g.edge_emb.shape[-1]
-        hidden_dim = total_hidden_dim - self.distance_embed_dim
-        edge_proj = nn.Dense(hidden_dim, use_bias=False)
-        dist_proj = edge_proj(g.edge_emb[..., :self.distance_embed_dim])
-        combined_embed = dist_proj * g.edge_emb[..., self.distance_embed_dim:]
-        node_embs = segment_reduce(self.edge_to_node, combined_embed, g.receivers, num_segments=g.n_total_nodes)
-        node_out = self.head(node_embs, ctx=ctx)
-        return g.replace(node_emb=node_out), ctx
-        
     
 
 class GN(nn.Module):    
@@ -502,45 +564,62 @@ if __name__ == '__main__':
         nn.Dense(node_emb),
         LearnedSpecEmb(config.data.num_species, node_emb)
     )
-    # block = MLPMessagePassing(
-    #     node_reduction='sum',
-    #     node_emb=node_emb,
-    #     msg_dim=msg_dim,
-    #     node_templ=LazyInMLP([]),
-    #     msg_templ=LazyInMLP([])
-    # )    
-    # readout = nn.Sequential([
-    #     Edge2NodeAgg(3, head=LazyInMLP([], out_dim=node_emb)),
-    #     NodeAggReadout(LazyInMLP([], out_dim=1))])
-    # model = GN(input_enc, 2, block, readout)
 
-    model = DimeNetPP(
-        input_enc=input_enc,
-        sbf=TripletAngleEmbedding(Bessel2DBasis()),
-        initial_embed_mlp=LazyInMLP([]),
-        output=DimeNetPPOutput(head=LazyInMLP([])),
-        int_dist_enc=LazyInMLP([]),
-        int_ang_enc=LazyInMLP([]),
-        int_down_proj_mlp=LazyInMLP([]),
-        int_up_proj_mlp=LazyInMLP([]),
-        int_pre_skip_mlp=LazyInMLP([]),
-        int_post_skip_mlp=LazyInMLP([])
-    )
+    block = MLPMessagePassing(
+        node_reduction=Fishnet(reduction='mean', net_templ=LazyInMLP([256]), inner_dim=32),
+        node_emb=node_emb,
+        msg_dim=msg_dim,
+        node_templ=LazyInMLP([]),
+        msg_templ=LazyInMLP([])
+    )    
+    readout = NodeAggReadout(LazyInMLP([], out_dim=1))
+    model = GN(input_enc, 2, block, readout)
+
+    # model = DimeNetPP(
+    #     input_enc=input_enc,
+    #     sbf=TripletAngleEmbedding(Bessel2DBasis()),
+    #     initial_embed_mlp=LazyInMLP([]),
+    #     output=DimeNetPPOutput(head=LazyInMLP([])),
+    #     int_dist_enc=LazyInMLP([]),
+    #     int_ang_enc=LazyInMLP([]),
+    #     int_down_proj_mlp=LazyInMLP([]),
+    #     int_up_proj_mlp=LazyInMLP([]),
+    #     int_pre_skip_mlp=LazyInMLP([]),
+    #     int_post_skip_mlp=LazyInMLP([])
+    # )
 
     batch = load_file(config, 300)
 
+    # debug_structure(batch)
+    # print(batch.padding_mask.devices())
+
     key = jax.random.key(12345)        
-    ctx = Context(training=True)    
+    ctx = Context(training=True)
 
     with jax.debug_nans(True):
         out, params = model.init_with_output(key, batch, ctx)    
+
+    steps_per_epoch, dl = dataloader(config, split='train', infinite=True)
         
-    def loss(params):
+    @jax.jit
+    def loss(params, batch):
         preds = model.apply(params, batch, ctx=Context(training=False))
         return config.train.loss.regression_loss(preds, batch.graph_data.e_form.reshape(-1, 1), batch.padding_mask)
+    
+    res = jax.value_and_grad(loss)(params, batch)
+    jax.block_until_ready(res)
 
-    res = jax.value_and_grad(loss)(params)
-    debug_stat(res)
+    # from ctypes import cdll
+    # libcudart = cdll.LoadLibrary('libcudart.so')
+
+    # libcudart.cudaProfilerStart()
+    # for i in range(1):
+    #     batch = next(dl)
+    #     res = jax.value_and_grad(loss)(params, batch)
+    #     jax.block_until_ready(res)
+    # libcudart.cudaProfilerStop()
+    
+    debug_stat(value=res[0], grad=res[1])
 
     # debug_structure(batch=batch, module=model, out=out)
     # debug_stat(batch=batch, module=model, out=out)    
