@@ -21,3 +21,4 @@ BASE_XLA_FLAGS = """
 os.environ['XLA_FLAGS'] = BASE_XLA_FLAGS.replace('\n', ' ')
 os.environ['jax_transfer_guard'] = 'disallow'
 os.environ['jax_platforms'] = 'gpu'
+os.environ['JAX_COMPILATION_CACHE_DIR'] = "/tmp/jax_cache"
