@@ -12,6 +12,7 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Float, Array, Int
 
+from cdv.gnn import SegmentReduction
 from cdv.layers import Context, Identity
 from cdv.utils import debug_stat, debug_structure, flax_summary
 
@@ -135,7 +136,7 @@ class SymmetricContraction(nn.Module):
         input = input.broadcast_to(shape + input.shape[-2:])
         index = jnp.broadcast_to(index, shape)
 
-        print(input.shape, index.shape)
+        # print(input.shape, index.shape)
         
         
         for order in range(self.correlation, 0, -1):  # correlation, ..., 1
@@ -212,7 +213,7 @@ class SymmetricContraction(nn.Module):
                 )  # normalize weights
 
                 if ir_out not in out:
-                    debug_structure(u=u, w=w, x=x_)
+                    # debug_structure(u=u, w=w, x=x_)
                     out[ir_out] = (
                         "special",
                         jnp.einsum("...jki,bkc,bcj->bc...i", u, w, x_),
@@ -241,8 +242,8 @@ class SymmetricContraction(nn.Module):
 
         # out[irrep_out] : [num_features, ir_out.dim]
         irreps_out = e3nn.Irreps(sorted(out.keys()))        
-        for k, v in out.items():
-            debug_structure(**{str(k): v})
+        # for k, v in out.items():
+        #     debug_structure(**{str(k): v})
         return e3nn.IrrepsArray.from_list(
             irreps_out,
             [out[ir][..., None, :] for (_, ir) in irreps_out],
@@ -686,8 +687,8 @@ if __name__ == '__main__':
     off_diagonal = False
     max_ell = 1
     num_interactions = 1
-    # hidden_irreps = "256x0e + 256x1o"
-    hidden_irreps = "16x0e + 16x1o"
+    hidden_irreps = "256x0e + 256x1o"
+    # hidden_irreps = "16x0e + 16x1o"
     interaction_irreps = "o3_restricted"  # "o3_restricted" seems to be better than "o3_full"
     epsilon = 0.4  # set to None to use the default value of MACE, 1/sqrt(avg_num_neighbors)
     correlation = 2  # 4 is better but 5x slower
@@ -736,25 +737,30 @@ if __name__ == '__main__':
 
             contributions = contributions.array[:, :, 0] # [n_nodes, num_interactions]
     
-    debug_structure(contributions)
-    debug_stat(contributions)
+    # debug_structure(contributions)
+    # debug_stat(contributions)
 
-    with jax.check_tracer_leaks(True):
-        flax_summary(mace, vectors=vecs, node_species=cg.nodes.species, senders=cg.edges.sender, receivers=cg.edges.receiver)
+    # with jax.check_tracer_leaks(True):
+    # flax_summary(mace, vectors=vecs, node_species=cg.nodes.species, senders=cg.edges.sender, receivers=cg.edges.receiver)
     # steps_per_epoch, dl = dataloader(config, split='train', infinite=True)
         
-    # @jax.jit
-    # def loss(params, batch):
-    #     cg = batch
-    #     send_pos = cg.nodes.cart[cg.senders]        
-    #     offsets = EinsOp('e abc xyz, e abc -> e xyz')(cg.graph_data.lat[cg.edges.graph_i], cg.edges.to_jimage)
-    #     recv_pos = cg.nodes.cart[cg.receivers] + offsets
+    @jax.jit
+    def loss(params, batch):
+        cg = batch
+        send_pos = cg.nodes.cart[cg.senders]        
+        offsets = EinsOp('e abc xyz, e abc -> e xyz')(cg.graph_data.lat[cg.edges.graph_i], cg.edges.to_jimage)
+        recv_pos = cg.nodes.cart[cg.receivers] + offsets
 
-    #     vecs = recv_pos - send_pos
-    #     preds = mace.apply(params, cg)
-    #     return config.train.loss.regression_loss(preds, batch.graph_data.e_form.reshape(-1, 1), batch.padding_mask)
+        vecs = recv_pos - send_pos
+        preds = mace.apply(params, vecs, cg.nodes.species, cg.edges.sender, cg.edges.receiver)
+
+        graph_preds = jax.ops.segment_sum(preds.array, cg.nodes.graph_i, num_segments=config.data.batch_n_graphs)
+        debug_structure(preds=preds, graph_preds=graph_preds)
+        return config.train.loss.regression_loss(graph_preds, batch.graph_data.e_form.reshape(-1, 1), batch.padding_mask)
     
-    # res = jax.value_and_grad(loss)(params, batch)
+    res = jax.value_and_grad(loss)(params, cg)    
+    debug_stat(res)
+    debug_structure(res)
     # jax.block_until_ready(res)
 
     # from ctypes import cdll
