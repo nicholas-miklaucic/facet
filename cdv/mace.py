@@ -7,6 +7,7 @@ import math
 from typing import Callable, Optional
 from typing import Set, Union
 from flax import linen as nn
+from flax import struct
 import e3nn_jax as e3nn
 import jax
 import jax.numpy as jnp
@@ -16,45 +17,60 @@ from cdv.gnn import SegmentReduction
 from cdv.layers import Context, Identity
 from cdv.utils import debug_stat, debug_structure, flax_summary
 
+E3Irreps = e3nn.Irreps
+E3IrrepsArray = e3nn.IrrepsArray
+
+from yaml import SafeDumper, add_representer, Dumper, Node
+import yaml
+def represent_irreps(d: SafeDumper, e: E3Irreps) -> Node:
+    return d.represent_str(str(e))
+
+def represent_irrep_array(d: SafeDumper, e: E3IrrepsArray) -> Node:
+    return d.represent_dict({'irreps': e.irreps, 'array': e.array})
+
+yaml.SafeDumper.add_representer(E3Irreps, represent_irreps)
+yaml.SafeDumper.add_representer(E3IrrepsArray, represent_irrep_array)
+
+
 class LinearNodeEmbedding(nn.Module):
     num_species: int
-    irreps_out: e3nn.Irreps
+    irreps_out: E3Irreps
 
     def setup(self):
-        self.irreps_out_calc = e3nn.Irreps(self.irreps_out).filter("0e").regroup()
-        self.embed = nn.Embed(self.num_species, e3nn.Irreps(self.irreps_out_calc).dim)
+        self.irreps_out_calc = E3Irreps(self.irreps_out).filter("0e").regroup()
+        self.embed = nn.Embed(self.num_species, E3Irreps(self.irreps_out_calc).dim)
 
-    def __call__(self, node_species: Int[Array, 'batch']) -> e3nn.IrrepsArray:
-        return e3nn.IrrepsArray(self.irreps_out_calc, self.embed(node_species))
+    def __call__(self, node_species: Int[Array, 'batch']) -> E3IrrepsArray:
+        return E3IrrepsArray(self.irreps_out_calc, self.embed(node_species))
     
 
 class LinearReadoutBlock(nn.Module):
-    output_irreps: e3nn.Irreps
+    output_irreps: E3Irreps
 
     @nn.compact
-    def __call__(self, x: e3nn.IrrepsArray) -> e3nn.IrrepsArray:
+    def __call__(self, x: E3IrrepsArray) -> E3IrrepsArray:
         """batch irreps -> batch irreps_out"""
         # x = [n_nodes, irreps]
         return e3nn.flax.Linear(self.output_irreps)(x)
     
 
 class NonLinearReadoutBlock(nn.Module):
-    hidden_irreps: e3nn.Irreps
-    output_irreps: e3nn.Irreps
+    hidden_irreps: E3Irreps
+    output_irreps: E3Irreps
     activation: Optional[Callable] = None
     gate: Optional[Callable] = None
 
     @nn.compact
-    def __call__(self, x: e3nn.IrrepsArray) -> e3nn.IrrepsArray:
+    def __call__(self, x: E3IrrepsArray) -> E3IrrepsArray:
         """batch irreps -> batch irreps_out"""
         # x = [n_nodes, irreps]
-        hidden_irreps = e3nn.Irreps(self.hidden_irreps)
-        output_irreps = e3nn.Irreps(self.output_irreps)
+        hidden_irreps = E3Irreps(self.hidden_irreps)
+        output_irreps = E3Irreps(self.output_irreps)
         num_vectors = hidden_irreps.filter(
             drop=["0e", "0o"]
         ).num_irreps  # Multiplicity of (l > 0) irreps
         x = e3nn.flax.Linear(
-            (hidden_irreps + e3nn.Irreps(f"{num_vectors}x0e")).simplify()
+            (hidden_irreps + E3Irreps(f"{num_vectors}x0e")).simplify()
         )(x)
         x = e3nn.gate(x, even_act=self.activation, even_gate_act=self.gate)
         return e3nn.flax.Linear(output_irreps)(x)  # [n_nodes, output_irreps]
@@ -66,7 +82,7 @@ class RadialEmbeddingBlock(nn.Module):
     envelope_function: Callable[[jnp.ndarray], jnp.ndarray]
     avg_r_min: Optional[float] = None
 
-    def __call__(self, edge_lengths: jnp.ndarray) -> e3nn.IrrepsArray:
+    def __call__(self, edge_lengths: jnp.ndarray) -> E3IrrepsArray:
         """batch -> batch num_basis"""
 
         def func(lengths):
@@ -86,7 +102,7 @@ class RadialEmbeddingBlock(nn.Module):
         embedding = factor * jnp.where(
             (edge_lengths == 0.0)[:, None], 0.0, func(edge_lengths)
         )  # [n_edges, num_basis]
-        return e3nn.IrrepsArray(f"{embedding.shape[-1]}x0e", embedding)
+        return E3IrrepsArray(f"{embedding.shape[-1]}x0e", embedding)
     
 
 
@@ -109,8 +125,8 @@ class SymmetricContraction(nn.Module):
     off_diagonal: bool = False
 
     @nn.compact
-    def __call__(self, input: e3nn.IrrepsArray # n_nodes, feats, irreps
-                 , index: jnp.ndarray) -> e3nn.IrrepsArray:
+    def __call__(self, input: E3IrrepsArray # n_nodes, feats, irreps
+                 , index: jnp.ndarray) -> E3IrrepsArray:
         gradient_normalization = self.gradient_normalization
         if gradient_normalization is None:
             gradient_normalization = e3nn.config("gradient_normalization")
@@ -120,7 +136,7 @@ class SymmetricContraction(nn.Module):
             ]        
         
         if isinstance(self.keep_irrep_out, str):
-            keep_irrep_out = e3nn.Irreps(self.keep_irrep_out)
+            keep_irrep_out = E3Irreps(self.keep_irrep_out)
             assert all(mul == 1 for mul, _ in keep_irrep_out)
         else:
             keep_irrep_out = self.keep_irrep_out
@@ -241,10 +257,10 @@ class SymmetricContraction(nn.Module):
             #           out
 
         # out[irrep_out] : [num_features, ir_out.dim]
-        irreps_out = e3nn.Irreps(sorted(out.keys()))        
+        irreps_out = E3Irreps(sorted(out.keys()))        
         # for k, v in out.items():
         #     debug_structure(**{str(k): v})
-        return e3nn.IrrepsArray.from_list(
+        return E3IrrepsArray.from_list(
             irreps_out,
             [out[ir][..., None, :] for (_, ir) in irreps_out],
             input.shape[:-1],
@@ -252,7 +268,7 @@ class SymmetricContraction(nn.Module):
     
 
 class EquivariantProductBasisBlock(nn.Module):
-    target_irreps: e3nn.Irreps
+    target_irreps: E3Irreps
     correlation: int
     num_species: int
     symmetric_tensor_product_basis: bool = True
@@ -273,9 +289,9 @@ class EquivariantProductBasisBlock(nn.Module):
     @nn.compact
     def __call__(
         self,
-        node_feats: e3nn.IrrepsArray,  # [n_nodes, feature * irreps]
+        node_feats: E3IrrepsArray,  # [n_nodes, feature * irreps]
         node_specie: jnp.ndarray,  # [n_nodes, ] int
-    ) -> e3nn.IrrepsArray:
+    ) -> E3IrrepsArray:
 
         node_feats = node_feats.mul_to_axis().remove_nones()
         node_feats = SymmetricContraction(
@@ -293,19 +309,19 @@ class EquivariantProductBasisBlock(nn.Module):
 
 class MessagePassingConvolution(nn.Module):
     avg_num_neighbors: float
-    target_irreps: e3nn.Irreps
+    target_irreps: E3Irreps
     max_ell: int
     activation: Callable
 
     @nn.compact
     def __call__(
         self,
-        vectors: e3nn.IrrepsArray,  # [n_edges, 3]
-        node_feats: e3nn.IrrepsArray,  # [n_nodes, irreps]
+        vectors: E3IrrepsArray,  # [n_edges, 3]
+        node_feats: E3IrrepsArray,  # [n_nodes, irreps]
         radial_embedding: jnp.ndarray,  # [n_edges, radial_embedding_dim]
         senders: jnp.ndarray,  # [n_edges, ]
         receivers: jnp.ndarray,  # [n_edges, ]
-    ) -> e3nn.IrrepsArray:
+    ) -> E3IrrepsArray:
         """-> n_nodes irreps"""
         assert node_feats.ndim == 2
 
@@ -325,11 +341,11 @@ class MessagePassingConvolution(nn.Module):
             ]
         ).regroup()  # [n_edges, irreps]
 
-        # one = e3nn.IrrepsArray.ones("0e", edge_attrs.shape[:-1])
+        # one = E3IrrepsArray.ones("0e", edge_attrs.shape[:-1])
         # messages = e3nn.tensor_product(
         #     messages, e3nn.concatenate([one, edge_attrs.filter(drop="0e")])
         # ).filter(self.target_irreps)
-
+        
         mix = e3nn.flax.MultiLayerPerceptron(
             3 * [64] + [messages.irreps.num_irreps],
             self.activation,
@@ -340,7 +356,7 @@ class MessagePassingConvolution(nn.Module):
 
         messages = messages * mix  # [n_edges, irreps]
 
-        zeros = e3nn.IrrepsArray.zeros(
+        zeros = E3IrrepsArray.zeros(
             messages.irreps, node_feats.shape[:1], messages.dtype
         )
         node_feats = zeros.at[receivers].add(messages)  # [n_nodes, irreps]
@@ -354,12 +370,12 @@ class InteractionBlock(nn.Module):
     @nn.compact
     def __call__(
         self,
-        vectors: e3nn.IrrepsArray,  # [n_edges, 3]
-        node_feats: e3nn.IrrepsArray,  # [n_nodes, irreps]
+        vectors: E3IrrepsArray,  # [n_edges, 3]
+        node_feats: E3IrrepsArray,  # [n_nodes, irreps]
         radial_embedding: jnp.ndarray,  # [n_edges, radial_embedding_dim]
         senders: jnp.ndarray,  # [n_edges, ]
         receivers: jnp.ndarray,  # [n_edges, ]
-    ) -> tuple[e3nn.IrrepsArray, e3nn.IrrepsArray]:
+    ) -> tuple[E3IrrepsArray, E3IrrepsArray]:
         """-> n_nodes irreps"""
         assert node_feats.ndim == 2
         assert vectors.ndim == 2
@@ -386,8 +402,8 @@ class MACELayer(nn.Module):
     first: bool
     last: bool
     num_features: int
-    interaction_irreps: e3nn.Irreps
-    hidden_irreps: e3nn.Irreps
+    interaction_irreps: E3Irreps
+    hidden_irreps: E3Irreps
     activation: Callable
     num_species: int
     epsilon: Optional[float]
@@ -401,15 +417,15 @@ class MACELayer(nn.Module):
     off_diagonal: bool
     soft_normalization: Optional[float]
     # ReadoutBlock:
-    output_irreps: e3nn.Irreps
-    readout_mlp_irreps: e3nn.Irreps
+    output_irreps: E3Irreps
+    readout_mlp_irreps: E3Irreps
     skip_connection_first_layer: bool = False
 
     @nn.compact
     def __call__(
         self,
-        vectors: e3nn.IrrepsArray,  # [n_edges, 3]
-        node_feats: e3nn.IrrepsArray,  # [n_nodes, irreps]
+        vectors: E3IrrepsArray,  # [n_edges, 3]
+        node_feats: E3IrrepsArray,  # [n_nodes, irreps]
         node_species: jnp.ndarray,  # [n_nodes] int between 0 and num_species-1
         radial_embedding: jnp.ndarray,  # [n_edges, radial_embedding_dim]
         senders: jnp.ndarray,  # [n_edges]
@@ -421,10 +437,10 @@ class MACELayer(nn.Module):
             node_mask = jnp.ones(node_species.shape[0], dtype=jnp.bool_)
 
         node_feats = profile(f"{self.name}: input", node_feats, node_mask[:, None])
-        hidden_irreps = e3nn.Irreps(self.hidden_irreps)
-        output_irreps = e3nn.Irreps(self.output_irreps)
-        interaction_irreps = e3nn.Irreps(self.interaction_irreps)
-        readout_mlp_irreps = e3nn.Irreps(self.readout_mlp_irreps)
+        hidden_irreps = E3Irreps(self.hidden_irreps)
+        output_irreps = E3Irreps(self.output_irreps)
+        interaction_irreps = E3Irreps(self.interaction_irreps)
+        readout_mlp_irreps = E3Irreps(self.readout_mlp_irreps)
 
         sc = None
         if not self.first or self.skip_connection_first_layer:
@@ -525,12 +541,12 @@ def safe_norm(x: jnp.ndarray, axis: int = None, keepdims=False) -> jnp.ndarray:
 class MACE(nn.Module):
     radial_basis: Callable[[jnp.ndarray], jnp.ndarray]
     radial_envelope: Callable[[jnp.ndarray], jnp.ndarray]
-    output_irreps: e3nn.Irreps  # Irreps of the output, default 1x0e    
+    output_irreps: E3Irreps  # Irreps of the output, default 1x0e    
     r_max: float
     avg_r_min: float
     num_interactions: int  # Number of interactions (layers), default 2
-    hidden_irreps: e3nn.Irreps  # 256x0e or 128x0e + 128x1o
-    readout_mlp_irreps: e3nn.Irreps  # Hidden irreps of the MLP in last readout, default 16x0e
+    hidden_irreps: E3Irreps  # 256x0e or 128x0e + 128x1o
+    readout_mlp_irreps: E3Irreps  # Hidden irreps of the MLP in last readout, default 16x0e
     avg_num_neighbors: float
     num_species: int
     radial_basis: Callable[[jnp.ndarray], jnp.ndarray]
@@ -544,33 +560,33 @@ class MACE(nn.Module):
     soft_normalization: Optional[float] = None
     symmetric_tensor_product_basis: bool = True
     off_diagonal: bool = False
-    interaction_irreps: Union[str, e3nn.Irreps] = "o3_restricted"  # or o3_full
+    interaction_irreps: Union[str, E3Irreps] = "o3_restricted"  # or o3_full
     node_embedding_type: type[nn.Module] = LinearNodeEmbedding
     skip_connection_first_layer: bool = False
     num_features: Optional[int] = None  # Number of features per node, default gcd of hidden_irreps multiplicities
    
 
     def setup(self):
-        self.output_irreps_calc = e3nn.Irreps(self.output_irreps)
-        self.hidden_irreps_calc = e3nn.Irreps(self.hidden_irreps)
-        self.readout_mlp_irreps_calc = e3nn.Irreps(self.readout_mlp_irreps)
+        self.output_irreps_calc = E3Irreps(self.output_irreps)
+        self.hidden_irreps_calc = E3Irreps(self.hidden_irreps)
+        self.readout_mlp_irreps_calc = E3Irreps(self.readout_mlp_irreps)
 
         if self.num_features is None:
             self.num_features_calc = functools.reduce(
                 math.gcd, (mul for mul, _ in self.hidden_irreps_calc)
             )
-            self.hidden_irreps_calc = e3nn.Irreps(
+            self.hidden_irreps_calc = E3Irreps(
                 [(mul // self.num_features_calc, ir) for mul, ir in self.hidden_irreps_calc]
             )
         else:
             self.num_features_calc = self.num_features            
 
         if self.interaction_irreps == "o3_restricted":
-            self.interaction_irreps_calc = e3nn.Irreps.spherical_harmonics(self.max_ell)
+            self.interaction_irreps_calc = E3Irreps.spherical_harmonics(self.max_ell)
         elif self.interaction_irreps == "o3_full":
-            self.interaction_irreps_calc = e3nn.Irreps(e3nn.Irrep.iterator(self.max_ell))
+            self.interaction_irreps_calc = E3Irreps(e3nn.Irrep.iterator(self.max_ell))
         else:
-            self.interaction_irreps_calc = e3nn.Irreps(self.interaction_irreps)
+            self.interaction_irreps_calc = E3Irreps(self.interaction_irreps)
 
         # Embeddings
         self.node_embedding = self.node_embedding_type(
@@ -588,9 +604,9 @@ class MACE(nn.Module):
             first = i == 0
             last = i == self.num_interactions - 1            
             hidden_irreps = (
-                e3nn.Irreps(self.hidden_irreps_calc)
+                E3Irreps(self.hidden_irreps_calc)
                 if not last
-                else e3nn.Irreps(self.hidden_irreps_calc).filter(self.output_irreps_calc)
+                else E3Irreps(self.hidden_irreps_calc).filter(self.output_irreps_calc)
             )
             layers.append(MACELayer(
                 first=first,
@@ -617,12 +633,12 @@ class MACE(nn.Module):
 
     def __call__(
         self,
-        vectors: e3nn.IrrepsArray,  # [n_edges, 3]
+        vectors: E3IrrepsArray,  # [n_edges, 3]
         node_species: jnp.ndarray,  # [n_nodes] int between 0 and num_species-1
         senders: jnp.ndarray,  # [n_edges]
         receivers: jnp.ndarray,  # [n_edges]
         node_mask: Optional[jnp.ndarray] = None,  # [n_nodes] only used for profiling
-    ) -> e3nn.IrrepsArray:
+    ) -> E3IrrepsArray:
         """
         -> n_nodes num_interactions output_irreps
         """
@@ -641,7 +657,7 @@ class MACE(nn.Module):
         node_feats = profile("embedding: node_feats", node_feats, node_mask[:, None])
 
         if not (hasattr(vectors, "irreps") and hasattr(vectors, "array")):
-            vectors = e3nn.IrrepsArray("1o", vectors)
+            vectors = E3IrrepsArray("1o", vectors)
 
         radial_embedding = self.radial_embedding(safe_norm(vectors.array, axis=-1))
 
@@ -687,8 +703,8 @@ if __name__ == '__main__':
     off_diagonal = False
     max_ell = 1
     num_interactions = 1
-    hidden_irreps = "256x0e + 256x1o"
-    # hidden_irreps = "16x0e + 16x1o"
+    # hidden_irreps = "256x0e + 256x1o"
+    hidden_irreps = "16x0e + 16x1o"
     interaction_irreps = "o3_restricted"  # "o3_restricted" seems to be better than "o3_full"
     epsilon = 0.4  # set to None to use the default value of MACE, 1/sqrt(avg_num_neighbors)
     correlation = 2  # 4 is better but 5x slower
@@ -730,6 +746,9 @@ if __name__ == '__main__':
     key = jax.random.key(12345)        
     ctx = Context(training=True)
 
+    # with jax.check_tracer_leaks(True):
+    flax_summary(mace, vectors=vecs, node_species=cg.nodes.species, senders=cg.edges.sender, receivers=cg.edges.receiver)
+
     with jax.debug_nans(True):
         with jax.log_compiles(False):
             contributions, params = mace.init_with_output(key, vecs, cg.nodes.species, cg.edges.sender, cg.edges.receiver)
@@ -740,8 +759,6 @@ if __name__ == '__main__':
     # debug_structure(contributions)
     # debug_stat(contributions)
 
-    # with jax.check_tracer_leaks(True):
-    # flax_summary(mace, vectors=vecs, node_species=cg.nodes.species, senders=cg.edges.sender, receivers=cg.edges.receiver)
     # steps_per_epoch, dl = dataloader(config, split='train', infinite=True)
         
     @jax.jit
