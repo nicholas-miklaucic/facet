@@ -32,7 +32,7 @@ logs_per_epoch = 8
 [train]
 lr_schedule_kind = "cosine"
 start_lr_frac = 0.1
-base_lr = 0.004
+base_lr = 4e-3
 end_lr_frac = 0.04
 weight_decay = 0.1
 beta_1 = 0.9

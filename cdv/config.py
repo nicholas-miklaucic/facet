@@ -509,7 +509,7 @@ class TrainingConfig:
         if self.lr_schedule_kind == 'cosine':
             base_lr = self.base_lr
             if self.prodigy:
-                base_lr /= 4e-3
+                base_lr = 1
             warmup_steps = steps_in_epoch * min(5, num_epochs // 2)
             return optax.warmup_cosine_decay_schedule(
                 init_value=base_lr * self.start_lr_frac,
@@ -524,7 +524,10 @@ class TrainingConfig:
     def optimizer(self, learning_rate):
         if self.prodigy:
             tx = optax.contrib.prodigy(
-                learning_rate, betas=(self.beta_1, self.beta_2), weight_decay=self.weight_decay
+                learning_rate,
+                betas=(self.beta_1, self.beta_2),
+                weight_decay=self.weight_decay,
+                estim_lr_coef=self.base_lr / 4e-3,
             )
         else:
             tx = optax.adamw(
