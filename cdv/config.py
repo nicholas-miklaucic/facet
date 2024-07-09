@@ -499,42 +499,41 @@ class TrainingConfig:
     # Gradient norm clipping.
     max_grad_norm: float = 1.0
 
-    # Schedule-free optimization.
+    # Schedule-free.
     schedule_free: bool = False
+
+    # Prodigy.
+    prodigy: bool = False
 
     def lr_schedule(self, num_epochs: int, steps_in_epoch: int):
         if self.lr_schedule_kind == 'cosine':
+            base_lr = self.base_lr
+            if self.prodigy:
+                base_lr /= 4e-3
             warmup_steps = steps_in_epoch * min(5, num_epochs // 2)
-            if self.schedule_free:
-                end_value = self.base_lr * self.end_lr_frac
-            else:
-                end_value = self.base_lr * 0.99
             return optax.warmup_cosine_decay_schedule(
-                init_value=self.base_lr * self.start_lr_frac,
-                peak_value=self.base_lr,
+                init_value=base_lr * self.start_lr_frac,
+                peak_value=base_lr,
                 warmup_steps=warmup_steps,
                 decay_steps=num_epochs * steps_in_epoch,
-                end_value=end_value,
+                end_value=base_lr * self.end_lr_frac,
             )
         else:
             raise ValueError('Other learning rate schedules not implemented yet')
 
     def optimizer(self, learning_rate):
-        if self.schedule_free:
-            b1 = 0
+        if self.prodigy:
+            tx = optax.contrib.prodigy(
+                learning_rate, betas=(self.beta_1, self.beta_2), weight_decay=self.weight_decay
+            )
         else:
-            b1 = self.beta_1
-
-        tx = optax.adamw(
-            learning_rate,
-            b1=b1,
-            b2=self.beta_2,
-            weight_decay=self.weight_decay,
-            nesterov=self.nestorov,
-        )
-
-        if self.schedule_free:
-            tx = optax.contrib.schedule_free(tx, learning_rate, b1=self.beta_1)
+            tx = optax.adamw(
+                learning_rate,
+                b1=self.beta_1,
+                b2=self.beta_2,
+                weight_decay=self.weight_decay,
+                nesterov=self.nestorov,
+            )
         return optax.chain(tx, optax.clip_by_block_rms(self.max_grad_norm))
 
 

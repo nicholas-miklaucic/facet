@@ -118,11 +118,11 @@ class TrainingRun:
     @ft.partial(jax.jit, static_argnames=('task', 'config'))
     @chex.assert_max_traces(5)
     def compute_metrics(
-        *, task: str, config: LossConfig, state: TrainState, batch: CrystalGraphs, rng, param_fn
+        *, task: str, config: LossConfig, state: TrainState, batch: CrystalGraphs, rng
     ):
         if task == 'e_form':
             preds = state.apply_fn(
-                param_fn(state), batch, ctx=Context(training=False), rngs=rng
+                state.params, batch, ctx=Context(training=False), rngs=rng
             ).squeeze()
             loss = config.regression_loss(preds, batch.e_form, batch.padding_mask)
             mae = jnp.abs(preds - batch.e_form).mean(where=batch.padding_mask)
@@ -131,11 +131,11 @@ class TrainingRun:
             )
             metric_updates = dict(mae=mae, loss=loss, rmse=rmse, grad_norm=state.last_grad_norm)
         elif task == 'vae':
-            preds = state.apply_fn(param_fn(state), batch, ctx=Context(training=False), rngs=rng)
+            preds = state.apply_fn(state.params, batch, ctx=Context(training=False), rngs=rng)
             loss_dict = vae_loss(config, batch, *preds)
             metric_updates = dict(grad_norm=state.last_grad_norm, **loss_dict)
         elif task == 'diled':
-            losses = state.apply_fn(param_fn(state), batch, ctx=Context(training=False), rngs=rng)
+            losses = state.apply_fn(state.params, batch, ctx=Context(training=False), rngs=rng)
             losses = {k: jnp.mean(v) for k, v in losses.items()}
             losses['grad_norm'] = state.last_grad_norm
             metric_updates = dict(**losses)

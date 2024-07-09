@@ -39,7 +39,8 @@ beta_1 = 0.9
 beta_2 = 0.999
 nestorov = true
 max_grad_norm = 1.0
-schedule_free = true
+schedule_free = false
+prodigy = true
 
 [mace]
 max_ell = 3
