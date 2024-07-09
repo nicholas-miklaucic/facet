@@ -27,10 +27,10 @@ from flax.serialization import msgpack_restore, msgpack_serialize
 tcheck = partial(jaxtyped, typechecker=None)
 
 # TODO make this dataset-specific
-ELEM_VALS = ('K Rb Ba Na Sr Li Ca La Tb Yb Ce Pr Nd Sm Dy Y Ho Er Tm Hf Mg Zr Sc U Ta Ti Mn Be Nb Al Tl V Zn Cr Cd'
-             ' In Ga Fe Co Cu Si Ni Ag Sn Hg Ge Bi B Sb Te Mo As P H Ir Os Pd Ru Pt Rh Pb W Au C Se S I Br N Cl O F').split(
-    ' '
-)
+ELEM_VALS = (
+    'K Rb Ba Na Sr Li Ca La Tb Yb Ce Pr Nd Sm Dy Y Ho Er Tm Hf Mg Zr Sc U Ta Ti Mn Be Nb Al Tl V Zn Cr Cd'
+    ' In Ga Fe Co Cu Si Ni Ag Sn Hg Ge Bi B Sb Te Mo As P H Ir Os Pd Ru Pt Rh Pb W Au C Se S I Br N Cl O F'
+).split(' ')
 
 INFERNA = [
     '#e6ab00',
@@ -54,6 +54,7 @@ INFERNA = [
 from rich.console import Console
 from rich.highlighter import RegexHighlighter
 from rich.theme import Theme
+
 
 def format_scalar(scalar: int | float, chars=6) -> str:
     """Formats the scalar using no more than the given number of characters, if possible."""
@@ -122,7 +123,7 @@ class TreeVisitor:
 
 
 class StatsVisitor(TreeVisitor):
-    def __init__(self, sample_size: int = 10_000) -> None:        
+    def __init__(self, sample_size: int = 10_000) -> None:
         super().__init__()
         self.sample_size = sample_size
 
@@ -131,37 +132,37 @@ class StatsVisitor(TreeVisitor):
         size = len(flat)
         if size <= 5:
             return str(jnp.round(flat, 4))
-        
+
         lo = arr.min().item()
         hi = arr.max().item()
-        
+
         if size <= self.sample_size:
             sampling = False
-            if flat.dtype == jnp.bfloat16:                
+            if flat.dtype == jnp.bfloat16:
                 x = np.array(flat.astype(jnp.float32))
             else:
                 x = np.array(flat)
         else:
             sampling = True
-            
+
             # n^2 + 1 tends to have fewer factors: should capture most slices
             inds = jnp.arange(np.floor(np.sqrt(size - 1)) + 1, dtype=jnp.int64) ** 2 + 1
             x = np.array(flat[inds])
 
-        summary = ''        
+        summary = ''
         if x.dtype.kind == 'f':
             mu = np.nanmean(x)
             sd = np.nanstd(x)
-            fmt = lambda s: f'{s:>8.3g}'         
-            if ((abs(mu) > 1000 or sd > 1000) or (1e-5 < abs(mu) < 1e-2 and 1e-5 < sd < 1e-2)):
+            fmt = lambda s: f'{s:>8.3g}'
+            if (abs(mu) > 1000 or sd > 1000) or (1e-5 < abs(mu) < 1e-2 and 1e-5 < sd < 1e-2):
                 factor = round(np.log10(max(abs(mu), sd)))
-                x = x / 10 ** factor
+                x = x / 10**factor
                 summary += f' E{factor}'
             else:
                 factor = 0
             summary = f'{fmt(mu / 10 ** factor)} ± {fmt(sd / 10 ** factor)}' + summary
         else:
-            zeros = np.mean(x == 0)            
+            zeros = np.mean(x == 0)
             if zeros > 0.2:
                 summary += f'{zeros:.0%} 0, '
 
@@ -173,13 +174,13 @@ class StatsVisitor(TreeVisitor):
                     summary += f'uniq: {n_uniq}'
 
             fmt = lambda s: f'{s:n}'
-        
+
         q25, q50, q75 = np.quantile(x, [0.25, 0.5, 0.75], method='closest_observation')
 
         quarts = f'({fmt(lo)} {fmt(q25)} {fmt(q50)} {fmt(q75)} {fmt(hi)})'
         out = f'{quarts:>50} {summary}'
         out += '~' if sampling else ''
-        
+
         return out
 
     def scalar(self, x: int | float):
@@ -205,17 +206,17 @@ class StructureVisitor(TreeVisitor):
         return f'(np){self.jax_arr(jnp.array(arr))}'
 
 
-COLORS = [    
+COLORS = [
     '#00a0ec',
-    '#00bc70',    
+    '#00bc70',
     '#ff7300',
-    '#387200',        
+    '#387200',
     '#aa2e00',
-    '#7555d3',        
-    '#d83990',    
+    '#7555d3',
+    '#d83990',
     '#deca00',
     '#00f0ff',
-    '#8ac7ff',    
+    '#8ac7ff',
     '#ff7dc6',
     '#e960ff',
 ]
@@ -268,8 +269,13 @@ def tree_traverse(visitor: TreeVisitor, obj, max_depth=2, collapse_single=True):
                 new_depth = max_depth - 1
 
             excluded = (('parent', None), ('name', None))
-            return {k: tree_traverse(visitor, v, new_depth) for k, v in obj.items() if (k, v) not in excluded}
+            return {
+                k: tree_traverse(visitor, v, new_depth)
+                for k, v in obj.items()
+                if (k, v) not in excluded
+            }
     elif is_dataclass(obj):
+        # print(type(obj), obj)
         return {obj.__class__.__name__: tree_traverse(visitor, asdict(obj), max_depth)}
     elif obj is None:
         return 'None'

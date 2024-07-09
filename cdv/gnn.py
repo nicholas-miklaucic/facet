@@ -1,4 +1,5 @@
 """Functionality for graph neural networks."""
+
 from gc import garbage
 from typing import Callable, Literal, Optional
 import eins.reduction
@@ -16,11 +17,22 @@ import pyrallis
 
 from cdv.databatch import CrystalGraphs
 from cdv.dataset import dataloader, load_file
-from cdv.layers import Context, Identity, LazyInMLP
+from cdv.layers import (
+    Context,
+    Identity,
+    LazyInMLP,
+    GaussBasis,
+    DistanceEncoder,
+    OldBessel1DBasis,
+    Bessel2DBasis,
+    Envelope,
+)
 from cdv.utils import debug_stat, debug_structure, flax_summary
+
 
 class Graphs(struct.PyTreeNode):
     """Generic graphs."""
+
     node_emb: Float[Array, 'nodes node_emb']
     incoming: Int[Array, 'nodes max_in']
     incoming_pad: Bool[Array, 'nodes max_in']
@@ -42,119 +54,27 @@ class Graphs(struct.PyTreeNode):
     @property
     def n_total_nodes(self) -> int:
         return len(self.node_graph_i)
-    
+
     @property
     def n_total_edges(self) -> int:
         return len(self.edge_graph_i)
-    
+
     @property
     def n_total_graphs(self) -> int:
         return len(self.n_nodes)
 
 
-class DistanceEncoder(nn.Module):
-    """Converts a scalar distance to an embedding."""
-    def __call__(self, d: Float[Array, 'batch'], ctx: Context) -> Float[Array, 'batch emb']:
-        raise NotImplementedError
-    
-
-class GaussBasis(DistanceEncoder):
-    """Uses equispaced Gaussian RBFs, as in coGN."""    
-    lo: float = 0
-    hi: float = 8
-    sd: float = 1
-    emb: int = 32
-
-    def setup(self):
-        self.locs = jnp.linspace(self.lo, self.hi, self.emb)
-
-    def __call__(self, d: Float[Array, 'batch'], ctx: Context) -> Float[Array, 'batch emb']:
-        z = d[:, None] - self.locs[None, :]
-        y = jnp.exp(-(z ** 2) / (2 * self.sd ** 2))
-        return y
-
-
-# different than
-# https://pytorch-geometric.readthedocs.io/en/latest/_modules/torch_geometric/nn/models/dimenet.html
-# it seems like what I do follows the paper better?
-
-class Envelope(nn.Module):
-    """Polynomial envelope that goes to 0 at a cutoff smoothly."""
-    # they seem to take p - 1 as input, which seems to me a little harebrained and fails for nans
-    # we just take in p and use the formula directly
-    p: int
-    def setup(self):
-        self.a = -(self.p + 1) * (self.p + 2) / 2
-        self.b = self.p * (self.p + 2)
-        self.c = -self.p * (self.p + 1) / 2
-
-    def __call__(self, x):
-        # our model shouldn't return nan, even for 0 input, so we have to change this
-        return 1 + x ** self.p * (self.a + x * (self.b + x * self.c))
-
-
-class Bessel1DBasis(DistanceEncoder):
-    """Uses spherical Bessel functions with a cutoff, as in DimeNet++."""
-    num_basis: int = 7
-    cutoff: float = 7
-    # Controls how fast the envelope goes to 0 at the cutoff.
-    envelope_exp: int = 6
-    freq_trainable: bool = True
-
-    def setup(self):
-        def freq_init(rng):
-            return jnp.arange(self.num_basis, dtype=jnp.float32) + 1
-        
-        if self.freq_trainable:
-            self.freq = self.param('freq', freq_init)
-        else:
-            self.freq = freq_init(None)
-        self.envelope = Envelope(self.envelope_exp)
-
-    def __call__(self, x, ctx: Context):
-        dist = x[..., None] / self.cutoff
-        env = self.envelope(dist)        
-
-        # e(d) = sqrt(2/c) * sin(fπd/c)/d
-        # we use sinc so it's defined at 0
-        # jnp.sinc is sin(πx)/(πx)
-        # e(d) = sqrt(2/c) * sin(πfd/c)/(fd/c) * f/c
-        # e(d) = sqrt(2/c) * sinc(πfd/c)) * πf/c
-
-        e_d = jnp.sqrt(2 / self.cutoff) * jnp.sinc(self.freq * dist) * (jnp.pi * self.freq / self.cutoff)
-
-        # debug_stat(e_d=e_d, env=env, dist=dist)        
-        return env * e_d
-
-
-
-class Bessel2DBasis(nn.Module):
-    num_radial: int = 7
-    num_spherical: int = 7
-    cutoff: float = 7
-    # Controls how fast the envelope goes to 0 at the cutoff.
-    envelope_exp: int = 6
-
-    def setup(self):
-        self.envelope = Envelope(self.envelope_exp)
-        self.radial = Bessel1DBasis(num_basis=self.num_radial, cutoff=self.cutoff, envelope_exp=self.envelope_exp)
-
-    def __call__(self, d, alpha, ctx):
-        # TODO implement this for real
-        dist_emb = self.radial(d, ctx) / self.radial(d * 0, ctx)  # batch radial
-        ang_emb = jnp.cos(alpha[:, None] * jnp.arange(self.num_spherical)) # batch spherical
-        return EinsOp('batch radial, batch spherical -> batch (radial spherical)')(dist_emb, ang_emb)
-    
-
 class SpeciesEmbedding(nn.Module):
     """Species embedding for the nodes."""
+
     def __call__(self, cg: CrystalGraphs, ctx: Context) -> Float[Array, 'nodes node_emb']:
         """Embeds the nodes."""
         raise NotImplementedError
-    
+
 
 class LearnedSpecEmb(nn.Module):
     """Normal trainable species embedding."""
+
     num_specs: int
     embed_dim: int
 
@@ -164,17 +84,20 @@ class LearnedSpecEmb(nn.Module):
     def __call__(self, cg: CrystalGraphs, ctx: Context) -> Float[Array, 'nodes node_emb']:
         """Embeds the nodes."""
         return self.embed(cg.nodes.species)
-    
+
 
 class InputEncoder(nn.Module):
     """Converts crystal graphs into generic graphs by encoding distances and species."""
+
     distance_enc: DistanceEncoder
     distance_projector: nn.Module
     species_emb: SpeciesEmbedding
 
     def __call__(self, cg: CrystalGraphs, ctx: Context) -> Graphs:
-        send_pos = cg.nodes.cart[cg.senders]        
-        offsets = EinsOp('e abc xyz, e abc -> e xyz')(cg.graph_data.lat[cg.edges.graph_i], cg.edges.to_jimage)
+        send_pos = cg.nodes.cart[cg.senders]
+        offsets = EinsOp('e abc xyz, e abc -> e xyz')(
+            cg.graph_data.lat[cg.edges.graph_i], cg.edges.to_jimage
+        )
         recv_pos = cg.nodes.cart[cg.receivers] + offsets
 
         vecs = recv_pos - send_pos
@@ -203,9 +126,9 @@ class InputEncoder(nn.Module):
             n_edges=cg.n_edge,
             node_graph_i=cg.nodes.graph_i,
             edge_graph_i=cg.edges.graph_i,
-            padding_mask=cg.padding_mask
+            padding_mask=cg.padding_mask,
         )
-    
+
 
 # def angle(a, b, c):
 #     """Gets angle ABC."""
@@ -219,8 +142,12 @@ class InputEncoder(nn.Module):
 
 SegmentReductionKind = Literal['max', 'min', 'prod', 'sum', 'mean']
 
+
 def segment_mean(data, segment_ids, **kwargs):
-    return jax.ops.segment_sum(data, segment_ids, **kwargs) / (1e-6 + jax.ops.segment_sum(jnp.ones_like(data), segment_ids, **kwargs))
+    return jax.ops.segment_sum(data, segment_ids, **kwargs) / (
+        1e-6 + jax.ops.segment_sum(jnp.ones_like(data), segment_ids, **kwargs)
+    )
+
 
 def segment_reduce(reduction: SegmentReductionKind, data, segment_ids, **kwargs):
     try:
@@ -239,19 +166,18 @@ class SegmentReduction(nn.Module):
 
     def __call__(self, data, segments, num_segments, ctx):
         return segment_reduce(self.reduction, data, segments, num_segments=num_segments)
-    
+
 
 class Fishnet(SegmentReduction):
     net_templ: LazyInMLP = LazyInMLP([])
     inner_dim: Optional[int] = None
     out_dim: Optional[int] = None
-    
+
     @nn.compact
     def __call__(self, data, segments, num_segments, ctx):
         if self.reduction not in ('sum', 'mean'):
             raise ValueError('Invalid reduction for fishnet')
-        
-    
+
         out_dim = self.out_dim or data.shape[-1]
         inner_dim = self.inner_dim or out_dim
 
@@ -260,10 +186,7 @@ class Fishnet(SegmentReduction):
         # F is o x o, but the Cholesky decomposition is just o(o + 1)/2
         net_out_dim = (inner_dim * (inner_dim + 1)) // 2 + inner_dim
 
-        net = self.net_templ.copy(
-            out_dim=net_out_dim,
-            kernel_init=nn.initializers.normal()
-        )
+        net = self.net_templ.copy(out_dim=net_out_dim, kernel_init=nn.initializers.normal())
 
         net_output = net(data, ctx)
 
@@ -278,7 +201,7 @@ class Fishnet(SegmentReduction):
             diag = jnp.diag_indices_from(L)
             L = L.at[diag].set(jax.nn.softplus(L[diag]))
             return L @ L.T
-        
+
         F = jax.vmap(un_chol)(F_chol.reshape(-1, F_chol.shape[-1]))
         F = F.reshape(*F_chol.shape[:-1], inner_dim, inner_dim)
 
@@ -292,7 +215,9 @@ class Fishnet(SegmentReduction):
         # because any all-0 will also have all-0 score, the multiplication will reset them, so we
         # just need to set them to anything that won't error
 
-        missing = (jnp.abs(t_reduced) < 0.1).all(axis=-1) & (jnp.abs(F_reduced) < 0.1).all(axis=(-2, -1))
+        missing = (jnp.abs(t_reduced) < 0.1).all(axis=-1) & (jnp.abs(F_reduced) < 0.1).all(
+            axis=(-2, -1)
+        )
 
         # There are a lot of numerical stabilty problems here. If the inverse is too small, the
         # gradient is all over the place. Adding 1 to the diagonals solves this, although it doesn't
@@ -317,44 +242,53 @@ class Fishnet(SegmentReduction):
         return theta
 
 
-
 class ProcessingBlock(nn.Module):
     """Block that processes graphs."""
+
     def __call__(self, g: Graphs, ctx: Context) -> Graphs:
         raise NotImplementedError
 
 
 class MessagePassing(ProcessingBlock):
     """Message passing block."""
+
     # How to reduce nodes. We're limited by Jax here, for the time being.
     node_reduction: SegmentReduction
 
-    def node_update(self, node: Float[Array, 'node_emb'], message: Float[Array, 'msg_dim'], ctx: Context) -> Float[Array, 'node_emb']:
+    def node_update(
+        self, node: Float[Array, 'node_emb'], message: Float[Array, 'msg_dim'], ctx: Context
+    ) -> Float[Array, 'node_emb']:
         """Updates the node information using the reduced message."""
         raise NotImplementedError
-    
-    def message(self, edge: Float[Array, 'edge_emb'], sender: Float[Array, 'node_emb'], receiver: Float[Array, 'node_emb'], ctx: Context) -> Float[Array, 'msg_dim']:
+
+    def message(
+        self,
+        edge: Float[Array, 'edge_emb'],
+        sender: Float[Array, 'node_emb'],
+        receiver: Float[Array, 'node_emb'],
+        ctx: Context,
+    ) -> Float[Array, 'msg_dim']:
         """Computes the message for a given edge."""
-        raise NotImplementedError    
-    
+        raise NotImplementedError
+
     def __call__(self, g: Graphs, ctx: Context) -> Graphs:
         edge_messages = jax.vmap(self.message, in_axes=(0, 0, 0, None))(
-            g.edge_emb,
-            g.node_emb[g.senders],
-            g.node_emb[g.receivers],
-            ctx
-        ) # shape: edges msg_dim
+            g.edge_emb, g.node_emb[g.senders], g.node_emb[g.receivers], ctx
+        )  # shape: edges msg_dim
 
         # aggregate incoming messages for each node
         # shape nodes msg_dim
-        node_messages = self.node_reduction(edge_messages, g.receivers, num_segments=g.n_total_nodes, ctx=ctx)
+        node_messages = self.node_reduction(
+            edge_messages, g.receivers, num_segments=g.n_total_nodes, ctx=ctx
+        )
 
         node_emb = jax.vmap(self.node_update, in_axes=(0, 0, None))(g.node_emb, node_messages, ctx)
         return g.replace(node_emb=node_emb)
-    
+
 
 class MLPMessagePassing(MessagePassing):
     """Message passing using MLPs."""
+
     node_emb: int
     msg_dim: int
     msg_templ: LazyInMLP
@@ -364,44 +298,58 @@ class MLPMessagePassing(MessagePassing):
         self.msg = self.msg_templ.copy(out_dim=self.msg_dim, name='msg')
         self.node_mlp = self.node_templ.copy(out_dim=self.node_emb, name='node')
 
-    def node_update(self, node: Float[Array, 'node_emb'], message: Float[Array, 'msg_dim'], ctx: Context) -> Float[Array, 'node_emb']:
+    def node_update(
+        self, node: Float[Array, 'node_emb'], message: Float[Array, 'msg_dim'], ctx: Context
+    ) -> Float[Array, 'node_emb']:
         """Updates the node information using the reduced message."""
         return node + self.node_mlp(jnp.concat((node, message)), ctx)
-    
-    def message(self, edge: Float[Array, 'edge_emb'], sender: Float[Array, 'node_emb'], receiver: Float[Array, 'node_emb'], ctx: Context) -> Float[Array, 'msg_dim']:
+
+    def message(
+        self,
+        edge: Float[Array, 'edge_emb'],
+        sender: Float[Array, 'node_emb'],
+        receiver: Float[Array, 'node_emb'],
+        ctx: Context,
+    ) -> Float[Array, 'msg_dim']:
         """Computes the message for a given edge."""
         return self.msg(jnp.concat((edge, sender, receiver)), ctx)
 
 
 class Readout(nn.Module):
     """Readout block in GNN."""
+
     def __call__(self, g: Graphs, ctx: Context) -> Float[Array, 'graphs out_dim']:
         raise NotImplementedError
-    
+
 
 class NodeAggReadout(Readout):
-    """Aggregates node features."""    
+    """Aggregates node features."""
+
     head: nn.Module
     graph_reduction: SegmentReduction = SegmentReduction('mean')
 
-    def node_transform(self, node: Float[Array, 'node_emb'], ctx: Context) -> Float[Array, 'node_reduce_emb']:
+    def node_transform(
+        self, node: Float[Array, 'node_emb'], ctx: Context
+    ) -> Float[Array, 'node_reduce_emb']:
         return node
-    
+
     def __call__(self, g: Graphs, ctx: Context) -> Float[Array, 'graphs out_dim']:
         transformed = jax.vmap(self.node_transform, in_axes=(0, None))(g.node_emb, ctx)
-        graph_embs = self.graph_reduction(transformed, g.node_graph_i, num_segments=g.n_total_graphs, ctx=ctx)
+        graph_embs = self.graph_reduction(
+            transformed, g.node_graph_i, num_segments=g.n_total_graphs, ctx=ctx
+        )
         return self.head(graph_embs, ctx=ctx)
-    
+
 
 class TripletAngleEmbedding(nn.Module):
     """
     Generates angle embeddings for each triplet.
     """
+
     distance_angle_enc: Bessel2DBasis
 
     @nn.compact
     def __call__(self, g: Graphs, ctx: Context) -> Float[Array, 'nodes in out emb']:
-
         #     ab = ab / (jnp.linalg.norm(ab) + 1e-8)
         #     cb = cb / (jnp.linalg.norm(ab) + 1e-8)
 
@@ -419,22 +367,25 @@ class TripletAngleEmbedding(nn.Module):
         # debug_stat(dots=dots)
         angles = jnp.arccos(jnp.clip(dots, -1, 1))
 
-        d_ij = jnp.take(g.dists, g.incoming).reshape(-1) # (nodes in)
+        d_ij = jnp.take(g.dists, g.incoming).reshape(-1)  # (nodes in)
 
         s_out = g.outgoing.shape[-1]
-        s_nodes, s_in = g.incoming.shape  
+        s_nodes, s_in = g.incoming.shape
 
-        angle_embeds = self.distance_angle_enc(jnp.repeat(d_ij, s_out), angles, ctx) # (nodes in out) emb        
-        angle_embeds = angle_embeds.reshape(s_nodes, s_in, s_out, -1) # nodes in out emb
+        angle_embeds = self.distance_angle_enc(
+            jnp.repeat(d_ij, s_out), angles, ctx
+        )  # (nodes in out) emb
+        angle_embeds = angle_embeds.reshape(s_nodes, s_in, s_out, -1)  # nodes in out emb
 
         return angle_embeds
 
 
 class DimeNetPPOutput(nn.Module):
-    head: LazyInMLP   
+    head: LazyInMLP
     edge2node: SegmentReduction = SegmentReduction('mean')
     node2graph: SegmentReduction = SegmentReduction('mean')
-    out_dim: int = 1    
+    out_dim: int = 1
+
     @nn.compact
     def __call__(self, base_g: Graphs, g: Graphs, ctx: Context) -> Float[Array, 'graphs out_dim']:
         msg_dim = g.edge_emb.shape[-1]
@@ -445,26 +396,29 @@ class DimeNetPPOutput(nn.Module):
         node_msgs = self.edge2node(edge_msgs, g.receivers, num_segments=g.n_total_nodes, ctx=ctx)
 
         head = self.head.copy(out_dim=self.out_dim, name='out_head')
-        
+
         node_outs = head(node_msgs, ctx)
-        graph_outs = self.node2graph(node_outs, g.node_graph_i, num_segments=g.n_total_graphs, ctx=ctx)
+        graph_outs = self.node2graph(
+            node_outs, g.node_graph_i, num_segments=g.n_total_graphs, ctx=ctx
+        )
 
         return graph_outs
+
 
 class DimeNetPP(nn.Module):
     input_enc: InputEncoder
     sbf: TripletAngleEmbedding
-    initial_embed_mlp: LazyInMLP    
-    output: DimeNetPPOutput    
+    initial_embed_mlp: LazyInMLP
+    output: DimeNetPPOutput
     int_dist_enc: LazyInMLP
     int_ang_enc: LazyInMLP
     int_down_proj_mlp: LazyInMLP
     int_up_proj_mlp: LazyInMLP
     int_pre_skip_mlp: LazyInMLP
     int_post_skip_mlp: LazyInMLP
-    
+
     msg_reduction: SegmentReduction = SegmentReduction('mean')
-    
+
     act: Callable = nn.sigmoid
     out_dim: int = 1
     initial_embed_distance_dim: int = 64
@@ -475,12 +429,12 @@ class DimeNetPP(nn.Module):
     @nn.compact
     def __call__(self, cg: CrystalGraphs, ctx: Context) -> Float[Array, 'graphs out_dim']:
         g = self.input_enc(cg, ctx)
-        a_sbf = self.sbf(g, ctx).astype(jnp.bfloat16) # nodes in out emb
+        a_sbf = self.sbf(g, ctx).astype(jnp.bfloat16)  # nodes in out emb
 
         # debug_stat(e_rbf=g.edge_emb, a_sbf=a_sbf)
 
         # first, generate initial message embeddings
-        edge_proj = nn.Dense(self.initial_embed_distance_dim, use_bias=False, name='edge_proj')        
+        edge_proj = nn.Dense(self.initial_embed_distance_dim, use_bias=False, name='edge_proj')
         # combine e_ij with z_i and z_j
         e_ij = edge_proj(g.edge_emb)
         z_i = jnp.take(g.node_emb, g.senders, axis=0)
@@ -490,59 +444,81 @@ class DimeNetPP(nn.Module):
         init_embed_mlp = self.initial_embed_mlp.copy(out_dim=self.message_dim, name='init_embed')
         m_ij = init_embed_mlp(x_ij, ctx)
 
-        curr_g = g.replace(edge_emb=m_ij)        
+        curr_g = g.replace(edge_emb=m_ij)
 
         output_blocks = []
         for i in range(self.num_interaction_blocks + 1):
             output_blocks.append(self.output.copy(out_dim=self.out_dim, name=f'output_{i}'))
 
         outs = output_blocks[0](g, curr_g, ctx)
-            
+
         for i, output_block in enumerate(output_blocks[1:]):
             # interaction
-            z_rbf = self.int_dist_enc.copy(out_dim=self.message_dim, name=f'int_dist_enc_{i}')(g.edge_emb, ctx).astype(jnp.bfloat16) # edges msg_dim
-            msg_proj = self.act(nn.Dense(self.message_dim, name=f'msg_proj_{i}')(curr_g.edge_emb)).astype(jnp.bfloat16) # edges msg_dim
+            z_rbf = self.int_dist_enc.copy(out_dim=self.message_dim, name=f'int_dist_enc_{i}')(
+                g.edge_emb, ctx
+            ).astype(jnp.bfloat16)  # edges msg_dim
+            msg_proj = self.act(
+                nn.Dense(self.message_dim, name=f'msg_proj_{i}')(curr_g.edge_emb)
+            ).astype(jnp.bfloat16)  # edges msg_dim
 
             # Hadamard multiplication of z_ji and msg_kj
             z_ji = jnp.take(z_rbf, g.outgoing, axis=0)  # nodes out msg_dim
-            m_kj = jnp.take(msg_proj, g.incoming, axis=0) # nodes in msg_dim            
+            m_kj = jnp.take(msg_proj, g.incoming, axis=0)  # nodes in msg_dim
 
             msg_dist = EinsOp('nodes out msg, nodes in msg -> nodes in out msg')(z_ji, m_kj)
 
-            msg_dist_down_proj = self.int_down_proj_mlp.copy(out_dim=self.down_proj_dim, name=f'int_down_proj_{i}')(msg_dist, ctx) # nodes in out down
-            z_sbf = self.int_ang_enc.copy(out_dim=self.down_proj_dim, name=f'int_ang_enc_{i}')(a_sbf, ctx) # nodes in out down
-            z_sbf = z_sbf * g.incoming_pad[..., None, None]  # zero out contributions from padding edges
+            msg_dist_down_proj = self.int_down_proj_mlp.copy(
+                out_dim=self.down_proj_dim, name=f'int_down_proj_{i}'
+            )(msg_dist, ctx)  # nodes in out down
+            z_sbf = self.int_ang_enc.copy(out_dim=self.down_proj_dim, name=f'int_ang_enc_{i}')(
+                a_sbf, ctx
+            )  # nodes in out down
+            z_sbf = (
+                z_sbf * g.incoming_pad[..., None, None]
+            )  # zero out contributions from padding edges
 
-            msg_all_down = EinsOp('nodes in out down, nodes in out down -> nodes out down')(msg_dist_down_proj, z_sbf)
-            msg_all = self.act(nn.Dense(self.message_dim, name=f'int_up_proj_{i}')(msg_all_down))  # nodes out msg_dim
+            msg_all_down = EinsOp('nodes in out down, nodes in out down -> nodes out down')(
+                msg_dist_down_proj, z_sbf
+            )
+            msg_all = self.act(
+                nn.Dense(self.message_dim, name=f'int_up_proj_{i}')(msg_all_down)
+            )  # nodes out msg_dim
             msg_all = msg_all * g.outgoing_pad[..., None]
 
             msg_all = EinsOp('nodes out msg_dim -> (nodes out) msg_dim')(msg_all)
 
-            prev_msg_enc = self.act(nn.Dense(self.message_dim, name=f'int_prev_msg_{i}')(curr_g.edge_emb))
+            prev_msg_enc = self.act(
+                nn.Dense(self.message_dim, name=f'int_prev_msg_{i}')(curr_g.edge_emb)
+            )
 
-            combo_msg = prev_msg_enc + self.msg_reduction(msg_all, g.outgoing.reshape(-1), num_segments=g.n_total_edges, ctx=ctx)
+            combo_msg = prev_msg_enc + self.msg_reduction(
+                msg_all, g.outgoing.reshape(-1), num_segments=g.n_total_edges, ctx=ctx
+            )
 
-            pre_skip = self.int_pre_skip_mlp.copy(out_dim=self.message_dim, name=f'int_pre_skip_{i}')(combo_msg, ctx)
+            pre_skip = self.int_pre_skip_mlp.copy(
+                out_dim=self.message_dim, name=f'int_pre_skip_{i}'
+            )(combo_msg, ctx)
 
-            new_msg = self.int_post_skip_mlp.copy(out_dim=self.message_dim, name=f'int_post_skip_{i}')(pre_skip + prev_msg_enc, ctx)
+            new_msg = self.int_post_skip_mlp.copy(
+                out_dim=self.message_dim, name=f'int_post_skip_{i}'
+            )(pre_skip + prev_msg_enc, ctx)
 
             curr_g = curr_g.replace(edge_emb=new_msg)
 
             outs = outs + output_block(g, curr_g, ctx)
 
         return outs
-    
 
-class GN(nn.Module):    
-    input_enc: InputEncoder    
+
+class GN(nn.Module):
+    input_enc: InputEncoder
     num_blocks: int
     block_templ: ProcessingBlock
     readout: Readout
 
     @nn.compact
     def __call__(self, cg: CrystalGraphs, ctx: Context) -> Float[Array, 'graphs out_dim']:
-        g = self.input_enc(cg, ctx)        
+        g = self.input_enc(cg, ctx)
         for _i in range(self.num_blocks):
             block = self.block_templ.copy()
             g = block(g, ctx)
@@ -552,17 +528,18 @@ class GN(nn.Module):
 
 if __name__ == '__main__':
     from cdv.config import MainConfig
+
     config = pyrallis.parse(config_class=MainConfig)
     config.cli.set_up_logging()
 
     node_emb = 128
     edge_emb = 128
     msg_dim = node_emb
-    
+
     input_enc = InputEncoder(
-        Bessel1DBasis(num_basis=7),
+        OldBessel1DBasis(num_basis=7),
         nn.Dense(node_emb),
-        LearnedSpecEmb(config.data.num_species, node_emb)
+        LearnedSpecEmb(config.data.num_species, node_emb),
     )
 
     block = MLPMessagePassing(
@@ -570,8 +547,8 @@ if __name__ == '__main__':
         node_emb=node_emb,
         msg_dim=msg_dim,
         node_templ=LazyInMLP([]),
-        msg_templ=LazyInMLP([])
-    )    
+        msg_templ=LazyInMLP([]),
+    )
     readout = NodeAggReadout(LazyInMLP([], out_dim=1))
     model = GN(input_enc, 2, block, readout)
 
@@ -593,19 +570,21 @@ if __name__ == '__main__':
     # debug_structure(batch)
     # print(batch.padding_mask.devices())
 
-    key = jax.random.key(12345)        
+    key = jax.random.key(12345)
     ctx = Context(training=True)
 
     with jax.debug_nans(True):
-        out, params = model.init_with_output(key, batch, ctx)    
+        out, params = model.init_with_output(key, batch, ctx)
 
     steps_per_epoch, dl = dataloader(config, split='train', infinite=True)
-        
+
     @jax.jit
     def loss(params, batch):
         preds = model.apply(params, batch, ctx=Context(training=False))
-        return config.train.loss.regression_loss(preds, batch.graph_data.e_form.reshape(-1, 1), batch.padding_mask)
-    
+        return config.train.loss.regression_loss(
+            preds, batch.graph_data.e_form.reshape(-1, 1), batch.padding_mask
+        )
+
     res = jax.value_and_grad(loss)(params, batch)
     jax.block_until_ready(res)
 
@@ -618,9 +597,9 @@ if __name__ == '__main__':
     #     res = jax.value_and_grad(loss)(params, batch)
     #     jax.block_until_ready(res)
     # libcudart.cudaProfilerStop()
-    
+
     debug_stat(value=res[0], grad=res[1])
 
     # debug_structure(batch=batch, module=model, out=out)
-    # debug_stat(batch=batch, module=model, out=out)    
+    # debug_stat(batch=batch, module=model, out=out)
     flax_summary(model, cg=batch, ctx=ctx)

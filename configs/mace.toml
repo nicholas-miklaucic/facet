@@ -1,7 +1,7 @@
 batch_size = 63
 do_profile = false
 num_epochs = 20
-regressor = "dimenet"
+regressor = "mace"
 task = "e_form"
 
 [data]
@@ -34,14 +34,15 @@ lr_schedule_kind = "cosine"
 start_lr_frac = 0.1
 base_lr = 0.004
 end_lr_frac = 0.04
-weight_decay = 0.03
+weight_decay = 0.1
 beta_1 = 0.9
 beta_2 = 0.999
 nestorov = true
 max_grad_norm = 1.0
+schedule_free = true
 
 [mace]
-max_ell = 2
+max_ell = 3
 num_interactions = 2
 hidden_irreps = "256x0e + 256x1o"
 correlation = 2

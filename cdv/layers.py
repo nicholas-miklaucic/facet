@@ -17,6 +17,7 @@ from cdv.utils import debug_structure, tcheck
 class Context(struct.PyTreeNode):
     training: bool
 
+
 class Identity(nn.Module):
     """Module that does nothing, used so model summaries accurately communicate the purpose."""
 
@@ -58,17 +59,144 @@ class LazyInMLP(nn.Module):
 
         x = nn.Dense(
             out_dim, kernel_init=self.kernel_init, bias_init=self.bias_init, dtype=x.dtype
-        )(x)        
+        )(x)
         if self.residual:
             if orig_x.shape[-1] != out_dim:
-                x_resid = nn.Dense(out_dim, kernel_init=self.kernel_init, bias_init=self.bias_init, dtype=x.dtype)(orig_x)
+                x_resid = nn.Dense(
+                    out_dim, kernel_init=self.kernel_init, bias_init=self.bias_init, dtype=x.dtype
+                )(orig_x)
             else:
                 x_resid = orig_x
-            
+
             x = x + x_resid
 
         x = self.final_act(x)
         return x
+
+
+import e3nn_jax as e3nn
+
+
+class DistanceEncoder(nn.Module):
+    """Converts a scalar distance to an embedding."""
+
+    def __call__(self, d: Float[Array, 'batch'], ctx: Context) -> Float[Array, 'batch emb']:
+        raise NotImplementedError
+
+
+class GaussBasis(DistanceEncoder):
+    """Uses equispaced Gaussian RBFs, as in coGN."""
+
+    lo: float = 0
+    hi: float = 8
+    sd: float = 1
+    emb: int = 32
+
+    def setup(self):
+        self.locs = jnp.linspace(self.lo, self.hi, self.emb)
+
+    def __call__(self, d: Float[Array, 'batch'], ctx: Context) -> Float[Array, 'batch emb']:
+        z = d[:, None] - self.locs[None, :]
+        y = jnp.exp(-(z**2) / (2 * self.sd**2))
+        return y
+
+
+# different than
+# https://pytorch-geometric.readthedocs.io/en/latest/_modules/torch_geometric/nn/models/dimenet.html
+# it seems like what I do follows the paper better?
+
+
+class Envelope(nn.Module):
+    """Polynomial envelope that goes to 0 at a cutoff smoothly."""
+
+    # they seem to take p - 1 as input, which seems to me a little harebrained and fails for nans
+    # we just take in p and use the formula directly
+    p: int
+
+    def setup(self):
+        self.a = -(self.p + 1) * (self.p + 2) / 2
+        self.b = self.p * (self.p + 2)
+        self.c = -self.p * (self.p + 1) / 2
+
+    def __call__(self, x):
+        # our model shouldn't return nan, even for 0 input, so we have to change this
+        return 1 + x**self.p * (self.a + x * (self.b + x * self.c))
+
+
+class OldBessel1DBasis(DistanceEncoder):
+    """Uses spherical Bessel functions with a cutoff, as in DimeNet++."""
+
+    num_basis: int = 7
+    cutoff: float = 7
+    # Controls how fast the envelope goes to 0 at the cutoff.
+    envelope_exp: int = 6
+    freq_trainable: bool = True
+
+    def setup(self):
+        def freq_init(rng):
+            return jnp.arange(self.num_basis, dtype=jnp.float32) + 1
+
+        if self.freq_trainable:
+            self.freq = self.param('freq', freq_init)
+        else:
+            self.freq = freq_init(None)
+        self.envelope = Envelope(self.envelope_exp)
+
+    def __call__(self, x, ctx: Context):
+        dist = x[..., None] / self.cutoff
+        env = self.envelope(dist)
+
+        # e(d) = sqrt(2/c) * sin(fπd/c)/d
+        # we use sinc so it's defined at 0
+        # jnp.sinc is sin(πx)/(πx)
+        # e(d) = sqrt(2/c) * sin(πfd/c)/(fd/c) * f/c
+        # e(d) = sqrt(2/c) * sinc(πfd/c)) * πf/c
+
+        e_d = (
+            jnp.sqrt(2 / self.cutoff)
+            * jnp.sinc(self.freq * dist)
+            * (jnp.pi * self.freq / self.cutoff)
+        )
+
+        # debug_stat(e_d=e_d, env=env, dist=dist)
+        return env * e_d
+
+
+class Bessel2DBasis(nn.Module):
+    num_radial: int = 7
+    num_spherical: int = 7
+    cutoff: float = 7
+    # Controls how fast the envelope goes to 0 at the cutoff.
+    envelope_exp: int = 6
+
+    def setup(self):
+        self.envelope = Envelope(self.envelope_exp)
+        self.radial = OldBessel1DBasis(
+            num_basis=self.num_radial, cutoff=self.cutoff, envelope_exp=self.envelope_exp
+        )
+
+    def __call__(self, d, alpha, ctx):
+        # TODO implement this for real
+        dist_emb = self.radial(d, ctx) / self.radial(d * 0, ctx)  # batch radial
+        ang_emb = jnp.cos(alpha[:, None] * jnp.arange(self.num_spherical))  # batch spherical
+        return EinsOp('batch radial, batch spherical -> batch (radial spherical)')(
+            dist_emb, ang_emb
+        )
+
+
+# def soft_envelope(length, max_length):
+#     return e3nn.soft_envelope(
+#         length,
+#         max_length,
+#         arg_multiplicator=envelope_arg_multiplicator,
+#         value_at_origin=envelope_value_at_origin,
+#     )
+
+# def polynomial_envelope(length, max_length, degree0: int, degree1: int):
+#     return e3nn.poly_envelope(degree0, degree1, max_length)(length)
+
+# def u_envelope(length, max_length, p: int):
+#     return e3nn.poly_envelope(p - 1, 2, max_length)(length)
 
 
 class MixerBlock(nn.Module):
@@ -86,7 +214,9 @@ class MixerBlock(nn.Module):
     attention_dropout_rate: float = 0.1
 
     @nn.compact
-    def __call__(self, inputs: Float[Array, 'batch seq chan'], abys: Float[Array, '6 chan'], ctx: Context) -> Float[Array, 'batch seq chan']:
+    def __call__(
+        self, inputs: Float[Array, 'batch seq chan'], abys: Float[Array, '6 chan'], ctx: Context
+    ) -> Float[Array, 'batch seq chan']:
         training = ctx.training
         a1, b1, y1, a2, b2, y2 = abys
         x = nn.LayerNorm(scale_init=nn.zeros, dtype=inputs.dtype)(inputs)
@@ -96,7 +226,6 @@ class MixerBlock(nn.Module):
         x = nn.Dropout(rate=self.attention_dropout_rate)(x, deterministic=not training)
         x = x * a1
         x = x + inputs
-
 
         y = nn.LayerNorm(dtype=x.dtype, scale_init=nn.zeros)(x)
         y = y * y2 + b2
@@ -147,10 +276,13 @@ class MLPMixer(nn.Module):
 
 class DeepSetEncoder(nn.Module):
     """Deep Sets with several types of pooling. Permutation-invariant encoder."""
+
     phi: nn.Module
 
     @nn.compact
-    def __call__(self, x: Float[Array, 'batch token chan'], training: bool) -> Float[Array, 'batch out_dim']:
+    def __call__(
+        self, x: Float[Array, 'batch token chan'], training: bool
+    ) -> Float[Array, 'batch out_dim']:
         phi_x = self.phi(x, training=training)
         phi_x = EinsOp('batch token out_dim -> batch out_dim token')(phi_x)
         op = 'batch out_dim token -> batch out_dim'
@@ -166,7 +298,9 @@ class PermInvariantEncoder(nn.Module):
     Uses mean, std, and differentiable quantiles."""
 
     @nn.compact
-    def __call__(self, x: Float[Array, 'batch token chan'], axis=-1, keepdims=True) -> Float[Array, 'batch out_dim']:
+    def __call__(
+        self, x: Float[Array, 'batch token chan'], axis=-1, keepdims=True
+    ) -> Float[Array, 'batch out_dim']:
         x = EinsOp('batch token chan -> batch chan token')(x)
         x_mean = jnp.mean(x, axis=axis, keepdims=keepdims)
         # x_std = jnp.std(x, axis=axis, keepdims=keepdims)

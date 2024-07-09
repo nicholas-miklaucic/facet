@@ -29,6 +29,7 @@ from cdv.layers import Context
 from cdv.utils import item_if_arr
 from cdv.vae import vae_loss
 
+
 @struct.dataclass
 class Metrics:
     totals: dict[str, Any] = field(default_factory=dict)
@@ -45,6 +46,7 @@ class Metrics:
 
     def items(self):
         return {k: item_if_arr(self.totals[k] / self.counts[k]) for k in self.totals}.items()
+
 
 class TrainState(train_state.TrainState):
     metrics: Metrics
@@ -115,23 +117,25 @@ class TrainingRun:
     @staticmethod
     @ft.partial(jax.jit, static_argnames=('task', 'config'))
     @chex.assert_max_traces(5)
-    def compute_metrics(*, task: str, config: LossConfig, state: TrainState, batch: CrystalGraphs, rng):
+    def compute_metrics(
+        *, task: str, config: LossConfig, state: TrainState, batch: CrystalGraphs, rng, param_fn
+    ):
         if task == 'e_form':
-            preds = state.apply_fn(state.params, batch, ctx=Context(training=False), rngs=rng).squeeze()
+            preds = state.apply_fn(
+                param_fn(state), batch, ctx=Context(training=False), rngs=rng
+            ).squeeze()
             loss = config.regression_loss(preds, batch.e_form, batch.padding_mask)
             mae = jnp.abs(preds - batch.e_form).mean(where=batch.padding_mask)
-            rmse = jnp.sqrt(optax.losses.squared_error(preds, batch.e_form).mean(where=batch.padding_mask))
-            metric_updates = dict(
-                mae=mae, loss=loss, rmse=rmse, grad_norm=state.last_grad_norm
+            rmse = jnp.sqrt(
+                optax.losses.squared_error(preds, batch.e_form).mean(where=batch.padding_mask)
             )
+            metric_updates = dict(mae=mae, loss=loss, rmse=rmse, grad_norm=state.last_grad_norm)
         elif task == 'vae':
-            preds = state.apply_fn(state.params, batch, ctx=Context(training=False), rngs=rng)            
+            preds = state.apply_fn(param_fn(state), batch, ctx=Context(training=False), rngs=rng)
             loss_dict = vae_loss(config, batch, *preds)
-            metric_updates = dict(
-                grad_norm=state.last_grad_norm, **loss_dict
-            )
+            metric_updates = dict(grad_norm=state.last_grad_norm, **loss_dict)
         elif task == 'diled':
-            losses = state.apply_fn(state.params, batch, ctx=Context(training=False), rngs=rng)
+            losses = state.apply_fn(param_fn(state), batch, ctx=Context(training=False), rngs=rng)
             losses = {k: jnp.mean(v) for k, v in losses.items()}
             losses['grad_norm'] = state.last_grad_norm
             metric_updates = dict(**losses)
@@ -141,7 +145,6 @@ class TrainingRun:
 
         state = state.replace(metrics=state.metrics.update(**metric_updates))
         return state
-
 
     @staticmethod
     @ft.partial(jax.jit, static_argnames=('task', 'config'))
@@ -155,7 +158,9 @@ class TrainingRun:
 
         def loss_fn(params):
             if task == 'e_form':
-                preds = state.apply_fn(params, batch, ctx=Context(training=True), rngs=rngs).squeeze()
+                preds = state.apply_fn(
+                    params, batch, ctx=Context(training=True), rngs=rngs
+                ).squeeze()
                 loss = config.regression_loss(preds, batch.e_form, batch.padding_mask)
                 return loss
             elif task == 'vae':
@@ -181,19 +186,25 @@ class TrainingRun:
         else:
             raise ValueError
 
-
     def next_step(self):
         return self.step(self.curr_step + 1, next(self.dl))
+
+    @property
+    def eval_state(self) -> TrainState:
+        if self.config.train.schedule_free:
+            params = optax.contrib.schedule_free_eval_params(
+                self.state.opt_state, self.state.params
+            )
+            return self.state.replace(params=params)
+        else:
+            return self.state
 
     def step(self, step: int, batch: CrystalGraphs):
         self.curr_step = step
         if step == 0:
             # initialize model
             self.state = create_train_state(
-                module=self.model,
-                optimizer=self.optimizer,
-                rng=self.rng,
-                batch=batch
+                module=self.model, optimizer=self.optimizer, rng=self.rng, batch=batch
             )
 
             if self.config.restart_from is not None:
@@ -211,7 +222,7 @@ class TrainingRun:
         )
 
         self.state = self.train_step(state=self.state, **kwargs)
-        self.state = self.compute_metrics(state=self.state, **kwargs)
+        self.state = self.compute_metrics(state=self.eval_state, **kwargs)
 
         if self.should_log or self.should_ckpt:  # one training epoch has passed
             for metric, value in self.state.metrics.items():  # compute metrics
@@ -241,7 +252,7 @@ class TrainingRun:
                     self.curr_step * self.config.batch_size / self.metrics_history['rel_mins'][-1]
                 )
             else:
-                prev, curr = self.metrics_history['rel_mins'][-2:]                
+                prev, curr = self.metrics_history['rel_mins'][-2:]
                 min_delta = curr - prev
 
                 prev, curr = self.metrics_history['step'][-2:]
@@ -252,7 +263,7 @@ class TrainingRun:
 
         if self.should_ckpt:
             # Compute metrics on the test set after each training epoch
-            self.test_state = self.state.replace(metrics=Metrics())
+            self.test_state = self.eval_state.replace(metrics=Metrics())
             for _i, test_batch in zip(range(self.steps_in_test_epoch), self.test_dl):
                 self.test_state = self.compute_metrics(
                     task=self.config.task,

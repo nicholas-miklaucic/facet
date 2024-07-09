@@ -13,7 +13,10 @@ import jax
 import jax.numpy as jnp
 from jaxtyping import Float, Array, Int
 
-from cdv.gnn import SegmentReduction
+from eins import EinsOp
+
+from cdv.databatch import CrystalGraphs
+from cdv.gnn import SegmentReduction, SegmentReductionKind
 from cdv.layers import Context, Identity
 from cdv.utils import debug_stat, debug_structure, flax_summary
 
@@ -22,11 +25,15 @@ E3IrrepsArray = e3nn.IrrepsArray
 
 from yaml import SafeDumper, add_representer, Dumper, Node
 import yaml
+
+
 def represent_irreps(d: SafeDumper, e: E3Irreps) -> Node:
     return d.represent_str(str(e))
 
+
 def represent_irrep_array(d: SafeDumper, e: E3IrrepsArray) -> Node:
     return d.represent_dict({'irreps': e.irreps, 'array': e.array})
+
 
 yaml.SafeDumper.add_representer(E3Irreps, represent_irreps)
 yaml.SafeDumper.add_representer(E3IrrepsArray, represent_irrep_array)
@@ -37,12 +44,12 @@ class LinearNodeEmbedding(nn.Module):
     irreps_out: E3Irreps
 
     def setup(self):
-        self.irreps_out_calc = E3Irreps(self.irreps_out).filter("0e").regroup()
+        self.irreps_out_calc = E3Irreps(self.irreps_out).filter('0e').regroup()
         self.embed = nn.Embed(self.num_species, E3Irreps(self.irreps_out_calc).dim)
 
     def __call__(self, node_species: Int[Array, 'batch']) -> E3IrrepsArray:
         return E3IrrepsArray(self.irreps_out_calc, self.embed(node_species))
-    
+
 
 class LinearReadoutBlock(nn.Module):
     output_irreps: E3Irreps
@@ -52,7 +59,7 @@ class LinearReadoutBlock(nn.Module):
         """batch irreps -> batch irreps_out"""
         # x = [n_nodes, irreps]
         return e3nn.flax.Linear(self.output_irreps)(x)
-    
+
 
 class NonLinearReadoutBlock(nn.Module):
     hidden_irreps: E3Irreps
@@ -67,14 +74,16 @@ class NonLinearReadoutBlock(nn.Module):
         hidden_irreps = E3Irreps(self.hidden_irreps)
         output_irreps = E3Irreps(self.output_irreps)
         num_vectors = hidden_irreps.filter(
-            drop=["0e", "0o"]
+            drop=['0e', '0o']
         ).num_irreps  # Multiplicity of (l > 0) irreps
         x = e3nn.flax.Linear(
-            (hidden_irreps + E3Irreps(f"{num_vectors}x0e")).simplify()
+            (hidden_irreps + E3Irreps(f'{num_vectors}x0e')).simplify(),
         )(x)
         x = e3nn.gate(x, even_act=self.activation, even_gate_act=self.gate)
-        return e3nn.flax.Linear(output_irreps)(x)  # [n_nodes, output_irreps]
-    
+        return e3nn.flax.Linear(output_irreps)(x)
+
+    # [n_nodes, output_irreps]
+
 
 class RadialEmbeddingBlock(nn.Module):
     r_max: float
@@ -94,18 +103,13 @@ class RadialEmbeddingBlock(nn.Module):
             if self.avg_r_min is None:
                 factor = 1.0
             else:
-                samples = jnp.linspace(
-                    self.avg_r_min, self.r_max, 1000, dtype=jnp.float64
-                )
+                samples = jnp.linspace(self.avg_r_min, self.r_max, 1000, dtype=jnp.float64)
                 factor = jnp.mean(func(samples) ** 2).item() ** -0.5
 
         embedding = factor * jnp.where(
             (edge_lengths == 0.0)[:, None], 0.0, func(edge_lengths)
         )  # [n_edges, num_basis]
-        return E3IrrepsArray(f"{embedding.shape[-1]}x0e", embedding)
-    
-
-
+        return E3IrrepsArray(f'{embedding.shape[-1]}x0e', embedding)
 
 
 A025582 = [0, 1, 3, 7, 12, 20, 30, 44, 65, 80, 96, 122, 147, 181, 203, 251, 289]
@@ -116,6 +120,7 @@ reduced_symmetric_tensor_product_basis = e3nn.reduced_symmetric_tensor_product_b
 reduced_tensor_product_basis = e3nn.reduced_tensor_product_basis
 # e3nn.reduced_symmetric_tensor_product_basis
 
+
 class SymmetricContraction(nn.Module):
     correlation: int
     keep_irrep_out: Union[Set[e3nn.Irrep], str]
@@ -125,27 +130,26 @@ class SymmetricContraction(nn.Module):
     off_diagonal: bool = False
 
     @nn.compact
-    def __call__(self, input: E3IrrepsArray # n_nodes, feats, irreps
-                 , index: jnp.ndarray) -> E3IrrepsArray:
+    def __call__(
+        self,
+        input: E3IrrepsArray,  # n_nodes, feats, irreps
+        index: jnp.ndarray,
+    ) -> E3IrrepsArray:
         gradient_normalization = self.gradient_normalization
         if gradient_normalization is None:
-            gradient_normalization = e3nn.config("gradient_normalization")
+            gradient_normalization = e3nn.config('gradient_normalization')
         if isinstance(gradient_normalization, str):
-            gradient_normalization = {"element": 0.0, "path": 1.0}[
-                gradient_normalization
-            ]        
-        
+            gradient_normalization = {'element': 0.0, 'path': 1.0}[gradient_normalization]
+
         if isinstance(self.keep_irrep_out, str):
             keep_irrep_out = E3Irreps(self.keep_irrep_out)
             assert all(mul == 1 for mul, _ in keep_irrep_out)
         else:
             keep_irrep_out = self.keep_irrep_out
 
-
         keep_irrep_out_set = {e3nn.Irrep(ir) for ir in keep_irrep_out}
 
         W = {}
-
 
         # Treat batch indices using vmap
         shape = jnp.broadcast_shapes(input.shape[:-2], index.shape)
@@ -153,17 +157,14 @@ class SymmetricContraction(nn.Module):
         index = jnp.broadcast_to(index, shape)
 
         # print(input.shape, index.shape)
-        
-        
+
         for order in range(self.correlation, 0, -1):  # correlation, ..., 1
             if self.symmetric_tensor_product_basis:
                 U = reduced_symmetric_tensor_product_basis(
                     input.irreps, order, keep_ir=keep_irrep_out_set
                 )
             else:
-                U = reduced_tensor_product_basis(
-                    [input.irreps] * order, keep_ir=keep_irrep_out_set
-                )
+                U = reduced_tensor_product_basis([input.irreps] * order, keep_ir=keep_irrep_out_set)
             # U = U / order  # normalization TODO(mario): put back after testing
             # NOTE(mario): The normalization constants (/order and /mul**0.5)
             # has been numerically checked to be correct.
@@ -178,11 +179,11 @@ class SymmetricContraction(nn.Module):
                 name = f'w{order}_{ir_out}'
                 W[name] = self.param(
                     name,
-                    nn.initializers.normal(stddev=(mul**-0.5) ** (1.0 - gradient_normalization)),
-                    # nn.initializers.normal(stddev=1),
-                    (self.num_species, mul, input.shape[-2]))
-                
-        
+                    # nn.initializers.normal(stddev=(mul**-0.5) ** (1.0 - gradient_normalization)),
+                    nn.initializers.normal(stddev=1),
+                    (self.num_species, mul, input.shape[-2]),
+                )
+
         # - This operation is parallel on the feature dimension (but each feature has its own parameters)
         # This operation is an efficient implementation of
         # vmap(lambda w, x: FunctionalLinear(irreps_out)(w, concatenate([x, tensor_product(x, x), tensor_product(x, x, x), ...])))(w, x)
@@ -204,9 +205,7 @@ class SymmetricContraction(nn.Module):
                     input.irreps, order, keep_ir=keep_irrep_out_set
                 )
             else:
-                U = reduced_tensor_product_basis(
-                    [input.irreps] * order, keep_ir=keep_irrep_out_set
-                )
+                U = reduced_tensor_product_basis([input.irreps] * order, keep_ir=keep_irrep_out_set)
             # U = U / order  # normalization TODO(mario): put back after testing
             # NOTE(mario): The normalization constants (/order and /mul**0.5)
             # has been numerically checked to be correct.
@@ -220,23 +219,21 @@ class SymmetricContraction(nn.Module):
             for (mul, ir_out), u in zip(U.irreps, U.list):
                 u = u.astype(x_.dtype)
                 # u: ndarray [(irreps_x.dim)^order, multiplicity, ir_out.dim]
-                #print(self)
+                # print(self)
                 name = f'w{order}_{ir_out}'
                 w = W[name][index]  # [multiplicity, num_features]
-                
-                w = (
-                    w * (mul**-0.5) ** gradient_normalization
-                )  # normalize weights
+
+                # w = w * (mul**-0.5) ** gradient_normalization  # normalize weights
 
                 if ir_out not in out:
                     # debug_structure(u=u, w=w, x=x_)
                     out[ir_out] = (
-                        "special",
-                        jnp.einsum("...jki,bkc,bcj->bc...i", u, w, x_),
+                        'special',
+                        jnp.einsum('...jki,bkc,bcj->bc...i', u, w, x_),
                     )  # [num_features, (irreps_x.dim)^(oder-1), ir_out.dim]
                 else:
                     out[ir_out] += jnp.einsum(
-                        "...ki,bkc->bc...i", u, w
+                        '...ki,bkc->bc...i', u, w
                     )  # [num_features, (irreps_x.dim)^order, ir_out.dim]
 
             # ((w3 x + w2) x + w1) x
@@ -249,7 +246,7 @@ class SymmetricContraction(nn.Module):
                     continue  # already done (special case optimization above)
 
                 out[ir_out] = jnp.einsum(
-                    "bc...ji,bcj->bc...i", out[ir_out], x_
+                    'bc...ji,bcj->bc...i', out[ir_out], x_
                 )  # [num_features, (irreps_x.dim)^(oder-1), ir_out.dim]
 
             # ((w3 x + w2) x + w1) x
@@ -257,7 +254,7 @@ class SymmetricContraction(nn.Module):
             #           out
 
         # out[irrep_out] : [num_features, ir_out.dim]
-        irreps_out = E3Irreps(sorted(out.keys()))        
+        irreps_out = E3Irreps(sorted(out.keys()))
         # for k, v in out.items():
         #     debug_structure(**{str(k): v})
         return E3IrrepsArray.from_list(
@@ -265,7 +262,7 @@ class SymmetricContraction(nn.Module):
             [out[ir][..., None, :] for (_, ir) in irreps_out],
             input.shape[:-1],
         )
-    
+
 
 class EquivariantProductBasisBlock(nn.Module):
     target_irreps: E3Irreps
@@ -274,37 +271,23 @@ class EquivariantProductBasisBlock(nn.Module):
     symmetric_tensor_product_basis: bool = True
     off_diagonal: bool = False
 
-    def setup(self):
-        self.symmetric_contractions = SymmetricContraction(
-            keep_irrep_out={ir for _, ir in self.target_irreps},
-            correlation=self.correlation,
-            num_species=self.num_species,
-            gradient_normalization="element",  # NOTE: This is to copy mace-torch
-            symmetric_tensor_product_basis=self.symmetric_tensor_product_basis,
-            off_diagonal=self.off_diagonal,
-        )
-
-        self.linear = e3nn.flax.Linear(self.target_irreps)
-
     @nn.compact
     def __call__(
         self,
         node_feats: E3IrrepsArray,  # [n_nodes, feature * irreps]
         node_specie: jnp.ndarray,  # [n_nodes, ] int
     ) -> E3IrrepsArray:
-
         node_feats = node_feats.mul_to_axis().remove_nones()
         node_feats = SymmetricContraction(
             keep_irrep_out={ir for _, ir in self.target_irreps},
             correlation=self.correlation,
             num_species=self.num_species,
-            gradient_normalization="element",  # NOTE: This is to copy mace-torch
+            gradient_normalization='element',  # NOTE: This is to copy mace-torch
             symmetric_tensor_product_basis=self.symmetric_tensor_product_basis,
             off_diagonal=self.off_diagonal,
         )(node_feats, node_specie)
         node_feats = node_feats.axis_to_mul()
         return e3nn.flax.Linear(self.target_irreps)(node_feats)
-    
 
 
 class MessagePassingConvolution(nn.Module):
@@ -345,24 +328,21 @@ class MessagePassingConvolution(nn.Module):
         # messages = e3nn.tensor_product(
         #     messages, e3nn.concatenate([one, edge_attrs.filter(drop="0e")])
         # ).filter(self.target_irreps)
-        
+
         mix = e3nn.flax.MultiLayerPerceptron(
             3 * [64] + [messages.irreps.num_irreps],
             self.activation,
             output_activation=False,
-        )(
-            radial_embedding
-        )  # [n_edges, num_irreps]
+        )(radial_embedding)  # [n_edges, num_irreps]
 
+        # debug_stat(messages=messages.array, mix=mix.array, rad=radial_embedding.array)
         messages = messages * mix  # [n_edges, irreps]
 
-        zeros = E3IrrepsArray.zeros(
-            messages.irreps, node_feats.shape[:1], messages.dtype
-        )
+        zeros = E3IrrepsArray.zeros(messages.irreps, node_feats.shape[:1], messages.dtype)
         node_feats = zeros.at[receivers].add(messages)  # [n_nodes, irreps]
 
         return node_feats / jnp.sqrt(self.avg_num_neighbors)
-    
+
 
 class InteractionBlock(nn.Module):
     conv: MessagePassingConvolution
@@ -381,22 +361,26 @@ class InteractionBlock(nn.Module):
         assert vectors.ndim == 2
         assert radial_embedding.ndim == 2
 
-        node_feats = e3nn.flax.Linear(node_feats.irreps, name="linear_up")(node_feats)
+        node_feats = e3nn.flax.Linear(node_feats.irreps, name='linear_up')(node_feats)
+        # debug_stat(up=node_feats.array)
 
         node_feats = self.conv(vectors, node_feats, radial_embedding, senders, receivers)
+        # debug_stat(conv=node_feats.array)
 
-        node_feats = e3nn.flax.Linear(self.conv.target_irreps, name="linear_down")(
-            node_feats
-        )
+        node_feats = e3nn.flax.Linear(self.conv.target_irreps, name='linear_down')(node_feats)
+        # debug_stat(down=node_feats.array)
 
         assert node_feats.ndim == 2
         return node_feats  # [n_nodes, target_irreps]
-    
+
+
 try:
     from profile_nn_jax import profile
 except ImportError:
+
     def profile(_, x, __=None):
         return x
+
 
 class MACELayer(nn.Module):
     first: bool
@@ -432,11 +416,11 @@ class MACELayer(nn.Module):
         receivers: jnp.ndarray,  # [n_edges]
         node_mask: Optional[jnp.ndarray] = None,  # [n_nodes] only used for profiling
     ):
-        """-> (n_nodes output_irreps, n_nodes features*hidden_irreps) """
+        """-> (n_nodes output_irreps, n_nodes features*hidden_irreps)"""
         if node_mask is None:
             node_mask = jnp.ones(node_species.shape[0], dtype=jnp.bool_)
 
-        node_feats = profile(f"{self.name}: input", node_feats, node_mask[:, None])
+        node_feats = profile(f'{self.name}: input', node_feats, node_mask[:, None])
         hidden_irreps = E3Irreps(self.hidden_irreps)
         output_irreps = E3Irreps(self.output_irreps)
         interaction_irreps = E3Irreps(self.interaction_irreps)
@@ -447,18 +431,19 @@ class MACELayer(nn.Module):
             sc = e3nn.flax.Linear(
                 self.num_features * hidden_irreps,
                 num_indexed_weights=self.num_species,
-                name="skip_tp",
-            )(
-                node_species, node_feats
-            )  # [n_nodes, feature * hidden_irreps]
-            sc = profile(f"{self.name}: self-connexion", sc, node_mask[:, None])
+                gradient_normalization='path',
+                name='skip_tp',
+            )(node_species, node_feats)  # [n_nodes, feature * hidden_irreps]
+            sc = profile(f'{self.name}: self-connexion', sc, node_mask[:, None])
 
-        node_feats = InteractionBlock(MessagePassingConvolution(
-            target_irreps=self.num_features * interaction_irreps,
-            avg_num_neighbors=self.avg_num_neighbors,
-            max_ell=self.max_ell,
-            activation=self.activation,
-        ))(
+        node_feats = InteractionBlock(
+            MessagePassingConvolution(
+                target_irreps=self.num_features * interaction_irreps,
+                avg_num_neighbors=self.avg_num_neighbors,
+                max_ell=self.max_ell,
+                activation=self.activation,
+            )
+        )(
             vectors=vectors,
             node_feats=node_feats,
             radial_embedding=radial_embedding,
@@ -471,20 +456,17 @@ class MACELayer(nn.Module):
         else:
             node_feats /= jnp.sqrt(self.avg_num_neighbors)
 
-        node_feats = profile(
-            f"{self.name}: interaction", node_feats, node_mask[:, None]
-        )
+        node_feats = profile(f'{self.name}: interaction', node_feats, node_mask[:, None])
 
         if self.first:
             # Selector TensorProduct
             node_feats = e3nn.flax.Linear(
                 self.num_features * interaction_irreps,
                 num_indexed_weights=self.num_species,
-                name="skip_tp_first",
+                gradient_normalization='path',
+                name='skip_tp_first',
             )(node_species, node_feats)
-            node_feats = profile(
-                f"{self.name}: skip_tp_first", node_feats, node_mask[:, None]
-            )
+            node_feats = profile(f'{self.name}: skip_tp_first', node_feats, node_mask[:, None])
 
         node_feats = EquivariantProductBasisBlock(
             target_irreps=self.num_features * hidden_irreps,
@@ -494,9 +476,7 @@ class MACELayer(nn.Module):
             off_diagonal=self.off_diagonal,
         )(node_feats=node_feats, node_specie=node_species)
 
-        node_feats = profile(
-            f"{self.name}: tensor power", node_feats, node_mask[:, None]
-        )
+        node_feats = profile(f'{self.name}: tensor power', node_feats, node_mask[:, None])
 
         if self.soft_normalization is not None:
 
@@ -504,44 +484,36 @@ class MACELayer(nn.Module):
                 n = n / self.soft_normalization
                 return 1.0 / (1.0 + n * e3nn.sus(n))
 
-            node_feats = e3nn.norm_activation(
-                node_feats, [phi] * len(node_feats.irreps)
-            )
+            node_feats = e3nn.norm_activation(node_feats, [phi] * len(node_feats.irreps))
 
-            node_feats = profile(
-                f"{self.name}: soft normalization", node_feats, node_mask[:, None]
-            )
+            node_feats = profile(f'{self.name}: soft normalization', node_feats, node_mask[:, None])
 
         if sc is not None:
             node_feats = node_feats + sc  # [n_nodes, feature * hidden_irreps]
 
         if not self.last:
-            node_outputs = LinearReadoutBlock(output_irreps)(
-                node_feats
-            )  # [n_nodes, output_irreps]
+            node_outputs = LinearReadoutBlock(output_irreps)(node_feats)  # [n_nodes, output_irreps]
         else:  # Non linear readout for last layer
             node_outputs = NonLinearReadoutBlock(
                 readout_mlp_irreps,
                 output_irreps,
                 activation=self.activation,
-            )(
-                node_feats
-            )  # [n_nodes, output_irreps]
+            )(node_feats)  # [n_nodes, output_irreps]
 
-        node_outputs = profile(f"{self.name}: output", node_outputs, node_mask[:, None])
+        node_outputs = profile(f'{self.name}: output', node_outputs, node_mask[:, None])
         return node_outputs, node_feats
-    
+
 
 def safe_norm(x: jnp.ndarray, axis: int = None, keepdims=False) -> jnp.ndarray:
     """nan-safe norm."""
     x2 = jnp.sum(x**2, axis=axis, keepdims=keepdims)
     return jnp.where(x2 == 0.0, 0.0, jnp.where(x2 == 0, 1.0, x2) ** 0.5)
-    
+
 
 class MACE(nn.Module):
     radial_basis: Callable[[jnp.ndarray], jnp.ndarray]
     radial_envelope: Callable[[jnp.ndarray], jnp.ndarray]
-    output_irreps: E3Irreps  # Irreps of the output, default 1x0e    
+    output_irreps: E3Irreps  # Irreps of the output, default 1x0e
     r_max: float
     avg_r_min: float
     num_interactions: int  # Number of interactions (layers), default 2
@@ -560,11 +532,12 @@ class MACE(nn.Module):
     soft_normalization: Optional[float] = None
     symmetric_tensor_product_basis: bool = True
     off_diagonal: bool = False
-    interaction_irreps: Union[str, E3Irreps] = "o3_restricted"  # or o3_full
+    interaction_irreps: Union[str, E3Irreps] = 'o3_restricted'  # or o3_full
     node_embedding_type: type[nn.Module] = LinearNodeEmbedding
     skip_connection_first_layer: bool = False
-    num_features: Optional[int] = None  # Number of features per node, default gcd of hidden_irreps multiplicities
-   
+    num_features: Optional[int] = (
+        None  # Number of features per node, default gcd of hidden_irreps multiplicities
+    )
 
     def setup(self):
         self.output_irreps_calc = E3Irreps(self.output_irreps)
@@ -579,11 +552,11 @@ class MACE(nn.Module):
                 [(mul // self.num_features_calc, ir) for mul, ir in self.hidden_irreps_calc]
             )
         else:
-            self.num_features_calc = self.num_features            
+            self.num_features_calc = self.num_features
 
-        if self.interaction_irreps == "o3_restricted":
+        if self.interaction_irreps == 'o3_restricted':
             self.interaction_irreps_calc = E3Irreps.spherical_harmonics(self.max_ell)
-        elif self.interaction_irreps == "o3_full":
+        elif self.interaction_irreps == 'o3_full':
             self.interaction_irreps_calc = E3Irreps(e3nn.Irrep.iterator(self.max_ell))
         else:
             self.interaction_irreps_calc = E3Irreps(self.interaction_irreps)
@@ -602,32 +575,34 @@ class MACE(nn.Module):
         layers = []
         for i in range(self.num_interactions):
             first = i == 0
-            last = i == self.num_interactions - 1            
+            last = i == self.num_interactions - 1
             hidden_irreps = (
                 E3Irreps(self.hidden_irreps_calc)
                 if not last
                 else E3Irreps(self.hidden_irreps_calc).filter(self.output_irreps_calc)
             )
-            layers.append(MACELayer(
-                first=first,
-                last=last,
-                num_features=self.num_features_calc,
-                interaction_irreps=self.interaction_irreps_calc,
-                hidden_irreps=hidden_irreps,
-                max_ell=self.max_ell,
-                avg_num_neighbors=self.avg_num_neighbors,
-                activation=self.gate,
-                num_species=self.num_species,
-                epsilon=self.epsilon,
-                correlation=self.correlation,
-                output_irreps=self.output_irreps_calc,
-                readout_mlp_irreps=self.readout_mlp_irreps_calc,
-                symmetric_tensor_product_basis=self.symmetric_tensor_product_basis,
-                off_diagonal=self.off_diagonal,
-                soft_normalization=self.soft_normalization,
-                skip_connection_first_layer=self.skip_connection_first_layer,
-                name=f"layer_{i}",
-            ))
+            layers.append(
+                MACELayer(
+                    first=first,
+                    last=last,
+                    num_features=self.num_features_calc,
+                    interaction_irreps=self.interaction_irreps_calc,
+                    hidden_irreps=hidden_irreps,
+                    max_ell=self.max_ell,
+                    avg_num_neighbors=self.avg_num_neighbors,
+                    activation=self.gate,
+                    num_species=self.num_species,
+                    epsilon=self.epsilon,
+                    correlation=self.correlation,
+                    output_irreps=self.output_irreps_calc,
+                    readout_mlp_irreps=self.readout_mlp_irreps_calc,
+                    symmetric_tensor_product_basis=self.symmetric_tensor_product_basis,
+                    off_diagonal=self.off_diagonal,
+                    soft_normalization=self.soft_normalization,
+                    skip_connection_first_layer=self.skip_connection_first_layer,
+                    name=f'layer_{i}',
+                )
+            )
 
         self.layers = layers
 
@@ -654,10 +629,10 @@ class MACE(nn.Module):
         node_feats = self.node_embedding(node_species).astype(
             vectors.dtype
         )  # [n_nodes, feature * irreps]
-        node_feats = profile("embedding: node_feats", node_feats, node_mask[:, None])
+        node_feats = profile('embedding: node_feats', node_feats, node_mask[:, None])
 
-        if not (hasattr(vectors, "irreps") and hasattr(vectors, "array")):
-            vectors = E3IrrepsArray("1o", vectors)
+        if not (hasattr(vectors, 'irreps') and hasattr(vectors, 'array')):
+            vectors = E3IrrepsArray('1o', vectors)
 
         radial_embedding = self.radial_embedding(safe_norm(vectors.array, axis=-1))
 
@@ -675,11 +650,130 @@ class MACE(nn.Module):
             )
             outputs += [node_outputs]  # list of [n_nodes, output_irreps]
 
+        # print([k.shape for k in outputs])
         return e3nn.stack(outputs, axis=1)  # [n_nodes, num_interactions, output_irreps]
 
 
+class MaceModel(nn.Module):
+    """Graph network that wraps MACE."""
 
-    
+    num_species: int
+    output_irreps: str  # output irreps, 1x0e for scalar
+    hidden_irreps: str  # 256x0e or 128x0e + 128x1o
+    readout_mlp_irreps: str  # Hidden irreps of the MLP in last readout, default 16x0e
+
+    num_interactions: int = 2  # Number of interactions (layers), default 2
+
+    # How to combine the outputs of different interaction blocks.
+    interaction_reduction: str = 'sum'
+    # Node reduction.
+    node_reduction: SegmentReductionKind = 'mean'
+
+    num_radial_embeds: int = 8
+    max_r: float = 7.0
+    avg_r_min: float = 1.0
+    radial_envelope_scale: float = 2
+    radial_envelope_intercept: float = 1.2
+
+    avg_num_neighbors: float = 20.0
+
+    max_ell: int = 3  # Max spherical harmonic degree, default 3
+    correlation: int = 2  # Correlation order at each layer (~ node_features^correlation), default 3
+
+    # If a float, soft norms values to stay in this range.
+    soft_normalization: Optional[float] = None
+
+    symmetric_tensor_product_basis: bool = True
+    off_diagonal: bool = False
+    interaction_irreps: Union[str, E3Irreps] = 'o3_restricted'  # or o3_full
+    skip_connection_first_layer: bool = False
+    # Number of features per node, default gcd of hidden_irreps multiplicities
+    num_features: Optional[int] = None
+
+    def setup(self):
+        def bessel_basis(length, max_length):
+            return e3nn.bessel(length, self.num_radial_embeds, max_length)
+
+        def soft_envelope(length, max_length):
+            return e3nn.soft_envelope(
+                length,
+                max_length,
+                arg_multiplicator=self.radial_envelope_scale,
+                value_at_origin=self.radial_envelope_intercept,
+            )
+
+        self.mace = MACE(
+            output_irreps=self.output_irreps,
+            r_max=self.max_r,
+            num_interactions=self.num_interactions,
+            avg_r_min=self.avg_r_min,
+            hidden_irreps=self.hidden_irreps,
+            readout_mlp_irreps=self.readout_mlp_irreps,
+            avg_num_neighbors=self.avg_num_neighbors,
+            num_species=self.num_species,
+            num_features=self.num_features,
+            max_ell=self.max_ell,
+            epsilon=None,
+            correlation=self.correlation,
+            gate=nn.silu,
+            soft_normalization=self.soft_normalization,
+            symmetric_tensor_product_basis=self.symmetric_tensor_product_basis,
+            off_diagonal=self.off_diagonal,
+            interaction_irreps=self.interaction_irreps,
+            node_embedding_type=LinearNodeEmbedding,
+            skip_connection_first_layer=self.skip_connection_first_layer,
+            radial_basis=bessel_basis,
+            radial_envelope=soft_envelope,
+        )
+
+        self.node_reduction_mod = SegmentReduction(self.node_reduction)
+
+    def __call__(self, cg: CrystalGraphs, ctx: Context):
+        send_pos = cg.nodes.cart[cg.senders]
+        offsets = EinsOp('e abc xyz, e abc -> e xyz')(
+            cg.graph_data.lat[cg.edges.graph_i], cg.edges.to_jimage
+        )
+        recv_pos = cg.nodes.cart[cg.receivers] + offsets
+        vecs = recv_pos - send_pos
+
+        # shape [n_nodes, n_interactions, output_irreps]
+        out = self.mace(vecs, cg.nodes.species, cg.senders, cg.receivers)
+
+        # for now, only scalars and vectors are supported
+        scalar_count = out.irreps.count('0e')
+        vector_count = out.irreps.count('1o')
+
+        assert scalar_count or vector_count
+        assert scalar_count + vector_count == out.irreps.num_irreps
+
+        outputs = {}
+
+        if scalar_count:
+            # n_nodes n_blocks n_outs
+            scalar_outs = out.filter('0e').array
+            scalar_outs = EinsOp(
+                'nodes blocks outs -> nodes outs', reduce=self.interaction_reduction
+            )(scalar_outs)
+            outputs['scalars'] = self.node_reduction_mod(
+                scalar_outs, cg.nodes.graph_i, cg.n_total_graphs, ctx
+            )
+
+        if vector_count:
+            # n_nodes n_blocks n_outs
+            vector_outs = out.filter('1o').array
+            vector_outs = EinsOp(
+                'nodes blocks outs -> nodes outs', reduce=self.interaction_reduction
+            )(vector_outs)
+            outputs['vectors'] = self.node_reduction_mod(
+                vector_outs, cg.nodes.graph_i, cg.n_total_graphs, ctx
+            )
+
+        if len(outputs) == 1:
+            return next(iter(outputs.values()))
+        else:
+            return outputs
+
+
 if __name__ == '__main__':
     from cdv.config import MainConfig
     import pyrallis
@@ -689,95 +783,54 @@ if __name__ == '__main__':
     config = pyrallis.parse(config_class=MainConfig)
     config.cli.set_up_logging()
 
-    r_max: float = 7
-    avg_num_neighbors: float = 20
-    mean: float = 0
-    std: float = 1
-    avg_r_min: float = 1.5
-
-    num_bessel: int = 8
-    envelope_arg_multiplicator: float = 2.0
-    envelope_value_at_origin: float = 1.2
-
     symmetric_tensor_product_basis = True  # symmetric is slightly worse but slightly faster
-    off_diagonal = False
-    max_ell = 1
-    num_interactions = 1
-    # hidden_irreps = "256x0e + 256x1o"
-    hidden_irreps = "16x0e + 16x1o"
-    interaction_irreps = "o3_restricted"  # "o3_restricted" seems to be better than "o3_full"
-    epsilon = 0.4  # set to None to use the default value of MACE, 1/sqrt(avg_num_neighbors)
+    max_ell = 2
+    num_interactions = 2
+    hidden_irreps = '256x0e + 256x1o'
+    # hidden_irreps = '16x0e + 16x1o'
     correlation = 2  # 4 is better but 5x slower
-    gate = nn.silu
-    readout_mlp_irreps = "16x0e"
-    num_species = config.data.num_species
+    readout_mlp_irreps = '128x0e + 16x1o'
+    output_irreps = '1x0e'
 
-    def bessel_basis(length, max_length):
-        return e3nn.bessel(length, num_bessel, max_length)
-    
-    def soft_envelope(length, max_length):
-        return e3nn.soft_envelope(
-            length,
-            max_length,
-            arg_multiplicator=envelope_arg_multiplicator,
-            value_at_origin=envelope_value_at_origin,
-        )
-    
-    def polynomial_envelope(length, max_length, degree0: int, degree1: int):
-        return e3nn.poly_envelope(degree0, degree1, max_length)(length)
-    
-    def u_envelope(length, max_length, p: int):
-        return e3nn.poly_envelope(p - 1, 2, max_length)(length)
-    
-    mace = MACE(output_irreps='0e', r_max=r_max, num_interactions=num_interactions, avg_r_min=avg_r_min, hidden_irreps=hidden_irreps, 
-                readout_mlp_irreps=readout_mlp_irreps, avg_num_neighbors=avg_num_neighbors, num_species=num_species, num_features=None, max_ell=max_ell, epsilon=epsilon, 
-                correlation=correlation, gate=gate, soft_normalization=None, symmetric_tensor_product_basis=symmetric_tensor_product_basis, off_diagonal=off_diagonal, 
-                interaction_irreps=interaction_irreps, node_embedding_type=LinearNodeEmbedding, skip_connection_first_layer=False,
-                radial_basis=bessel_basis, radial_envelope=soft_envelope)
-    
+    mace = MaceModel(
+        output_irreps=output_irreps,
+        num_interactions=num_interactions,
+        hidden_irreps=hidden_irreps,
+        readout_mlp_irreps=readout_mlp_irreps,
+        num_species=config.data.num_species,
+        max_ell=max_ell,
+        correlation=correlation,
+    )
+
     cg = load_file(config, 20)
 
-    send_pos = cg.nodes.cart[cg.senders]        
-    offsets = EinsOp('e abc xyz, e abc -> e xyz')(cg.graph_data.lat[cg.edges.graph_i], cg.edges.to_jimage)
-    recv_pos = cg.nodes.cart[cg.receivers] + offsets
-
-    vecs = recv_pos - send_pos
-
-    key = jax.random.key(12345)        
+    key = jax.random.key(12345)
     ctx = Context(training=True)
 
     # with jax.check_tracer_leaks(True):
-    flax_summary(mace, vectors=vecs, node_species=cg.nodes.species, senders=cg.edges.sender, receivers=cg.edges.receiver)
+    # flax_summary(mace, cg=cg, ctx=ctx)
 
-    with jax.debug_nans(True):
+    with jax.debug_nans(False):
         with jax.log_compiles(False):
-            contributions, params = mace.init_with_output(key, vecs, cg.nodes.species, cg.edges.sender, cg.edges.receiver)
-            # [n_nodes, num_interactions, 0e]
+            contributions, params = mace.init_with_output(key, cg=cg, ctx=ctx)
 
-            contributions = contributions.array[:, :, 0] # [n_nodes, num_interactions]
-    
     # debug_structure(contributions)
     # debug_stat(contributions)
+    # debug_stat(params)
 
     # steps_per_epoch, dl = dataloader(config, split='train', infinite=True)
-        
+
     @jax.jit
     def loss(params, batch):
         cg = batch
-        send_pos = cg.nodes.cart[cg.senders]        
-        offsets = EinsOp('e abc xyz, e abc -> e xyz')(cg.graph_data.lat[cg.edges.graph_i], cg.edges.to_jimage)
-        recv_pos = cg.nodes.cart[cg.receivers] + offsets
+        preds = mace.apply(params, cg=cg, ctx=Context(training=True))
+        return config.train.loss.regression_loss(
+            preds, batch.graph_data.e_form.reshape(-1, 1), batch.padding_mask
+        )
 
-        vecs = recv_pos - send_pos
-        preds = mace.apply(params, vecs, cg.nodes.species, cg.edges.sender, cg.edges.receiver)
-
-        graph_preds = jax.ops.segment_sum(preds.array, cg.nodes.graph_i, num_segments=config.data.batch_n_graphs)
-        debug_structure(preds=preds, graph_preds=graph_preds)
-        return config.train.loss.regression_loss(graph_preds, batch.graph_data.e_form.reshape(-1, 1), batch.padding_mask)
-    
-    res = jax.value_and_grad(loss)(params, cg)    
+    res = jax.value_and_grad(loss)(params, cg)
     debug_stat(res)
-    debug_structure(res)
+    # debug_structure(res)
     # jax.block_until_ready(res)
 
     # from ctypes import cdll
@@ -789,9 +842,9 @@ if __name__ == '__main__':
     #     res = jax.value_and_grad(loss)(params, batch)
     #     jax.block_until_ready(res)
     # libcudart.cudaProfilerStop()
-    
+
     # debug_stat(value=res[0], grad=res[1])
 
     # debug_structure(batch=batch, module=model, out=out)
-    # debug_stat(batch=batch, module=model, out=out)    
+    # debug_stat(batch=batch, module=model, out=out)
     # flax_summary(mace, vecs, cg.nodes.species, cg.edges.sender, cg.edges.receiver)
