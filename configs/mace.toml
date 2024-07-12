@@ -1,6 +1,6 @@
 batch_size = 63
 do_profile = false
-num_epochs = 20
+num_epochs = 100
 regressor = "mace"
 task = "e_form"
 
@@ -28,13 +28,14 @@ gpu_ids = []
 [log]
 log_dir = "logs"
 logs_per_epoch = 8
+exp_name = "mace_base"
 
 [train]
 lr_schedule_kind = "cosine"
 start_lr_frac = 0.1
 base_lr = 4e-3
 end_lr_frac = 0.04
-weight_decay = 0.1
+weight_decay = 0.15
 beta_1 = 0.9
 beta_2 = 0.999
 nestorov = true
@@ -43,9 +44,9 @@ schedule_free = false
 prodigy = true
 
 [mace]
-max_ell = 3
-num_interactions = 2
-hidden_irreps = "256x0e + 256x1o"
+max_ell = 2
+num_interactions = 4
+hidden_irreps = "256x0e + 64x1o"
 correlation = 2
 readout_mlp_irreps = "128x0e + 16x1o"
 

@@ -537,7 +537,7 @@ class TrainingConfig:
                 weight_decay=self.weight_decay,
                 nesterov=self.nestorov,
             )
-        return optax.chain(tx, optax.clip_by_block_rms(self.max_grad_norm))
+        return optax.chain(tx, optax.clip_by_global_norm(self.max_grad_norm))
 
 
 @dataclass

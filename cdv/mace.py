@@ -47,7 +47,7 @@ class LinearNodeEmbedding(nn.Module):
         self.irreps_out_calc = E3Irreps(self.irreps_out).filter('0e').regroup()
         self.embed = nn.Embed(self.num_species, E3Irreps(self.irreps_out_calc).dim)
 
-    def __call__(self, node_species: Int[Array, 'batch']) -> E3IrrepsArray:
+    def __call__(self, node_species: Int[Array, ' batch']) -> E3IrrepsArray:
         return E3IrrepsArray(self.irreps_out_calc, self.embed(node_species))
 
 
@@ -156,6 +156,10 @@ class SymmetricContraction(nn.Module):
         input = input.broadcast_to(shape + input.shape[-2:])
         index = jnp.broadcast_to(index, shape)
 
+        species_embed = nn.Embed(self.num_species, 32, name='species_embed')
+        # species_ind = index
+        species_ind = species_embed(index)
+
         # print(input.shape, index.shape)
 
         for order in range(self.correlation, 0, -1):  # correlation, ..., 1
@@ -181,7 +185,7 @@ class SymmetricContraction(nn.Module):
                     name,
                     # nn.initializers.normal(stddev=(mul**-0.5) ** (1.0 - gradient_normalization)),
                     nn.initializers.normal(stddev=1),
-                    (self.num_species, mul, input.shape[-2]),
+                    (species_embed.features, mul, input.shape[-2]),
                 )
 
         # - This operation is parallel on the feature dimension (but each feature has its own parameters)
@@ -221,7 +225,10 @@ class SymmetricContraction(nn.Module):
                 # u: ndarray [(irreps_x.dim)^order, multiplicity, ir_out.dim]
                 # print(self)
                 name = f'w{order}_{ir_out}'
-                w = W[name][index]  # [multiplicity, num_features]
+                w = jnp.einsum('be,e...->b...', species_ind, W[name])
+                # w = W[name][species]
+
+                # [multiplicity, num_features]
 
                 # w = w * (mul**-0.5) ** gradient_normalization  # normalize weights
 
