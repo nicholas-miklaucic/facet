@@ -38,7 +38,7 @@ from cdv.layers import Identity, LazyInMLP, MLPMixer
 from cdv.mace import MaceModel
 from cdv.mlp_mixer import MLPMixerRegressor, O3ImageEmbed
 from cdv.utils import ELEM_VALS
-from cdv.vae import VAE, AggMLP, Encoder
+from cdv.vae import Encoder
 
 pyrallis.set_config_type('toml')
 
@@ -604,18 +604,9 @@ class MainConfig:
     #     return self.diffusion.diffusion.build(diffuser)
 
     def build_vae(self):
-        cogn = self.cogn.build(self.data.num_species)
-        latent_dim = 512
-        return VAE(
-            encoder=Encoder(
-                input_enc=cogn.input_enc,
-                num_blocks=cogn.num_blocks,
-                block_templ=cogn.block_templ,
-                latent_dim=latent_dim,
-                head=LazyInMLP([512, 1024, 1024], dropout_rate=0.2),
-            ),
-            agg_mlp=AggMLP(mlp=LazyInMLP([512, 1024, 1024], dropout_rate=0.2)),
-        )
+        # output irreps gets changed
+        enc = Encoder(self.mace.build(self.data.num_species, '0e'))
+        return enc
 
     def build_regressor(self):
         if self.regressor == 'cogn':

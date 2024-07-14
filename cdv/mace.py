@@ -14,29 +14,12 @@ import jax.numpy as jnp
 from jaxtyping import Float, Array, Int
 
 from eins import EinsOp
+import numpy as np
 
 from cdv.databatch import CrystalGraphs
 from cdv.gnn import SegmentReduction, SegmentReductionKind
-from cdv.layers import Context, Identity
+from cdv.layers import Context, E3NormNorm, Identity, LazyInMLP, E3Irreps, E3IrrepsArray, edge_vecs
 from cdv.utils import debug_stat, debug_structure, flax_summary
-
-E3Irreps = e3nn.Irreps
-E3IrrepsArray = e3nn.IrrepsArray
-
-from yaml import SafeDumper, add_representer, Dumper, Node
-import yaml
-
-
-def represent_irreps(d: SafeDumper, e: E3Irreps) -> Node:
-    return d.represent_str(str(e))
-
-
-def represent_irrep_array(d: SafeDumper, e: E3IrrepsArray) -> Node:
-    return d.represent_dict({'irreps': e.irreps, 'array': e.array})
-
-
-yaml.SafeDumper.add_representer(E3Irreps, represent_irreps)
-yaml.SafeDumper.add_representer(E3IrrepsArray, represent_irrep_array)
 
 
 class LinearNodeEmbedding(nn.Module):
@@ -134,6 +117,8 @@ class SymmetricContraction(nn.Module):
         self,
         input: E3IrrepsArray,  # n_nodes, feats, irreps
         index: jnp.ndarray,
+        ctx: Context,
+        species_embed: Float[Array, 'num_species embed_dim'] | None = None,
     ) -> E3IrrepsArray:
         gradient_normalization = self.gradient_normalization
         if gradient_normalization is None:
@@ -156,9 +141,16 @@ class SymmetricContraction(nn.Module):
         input = input.broadcast_to(shape + input.shape[-2:])
         index = jnp.broadcast_to(index, shape)
 
-        species_embed = nn.Embed(self.num_species, 32, name='species_embed')
-        # species_ind = index
-        species_ind = species_embed(index)
+        num_rbf = 32
+
+        if species_embed is None:
+            species_embed = nn.Embed(self.num_species, num_rbf, name='species_embed')
+            # species_ind = index
+            species_ind = species_embed(index)
+        else:
+            species_embed_mlp = LazyInMLP([], out_dim=num_rbf, name='species_radial_mlp')
+            species_embed = species_embed_mlp(species_embed, ctx=ctx)
+            species_ind = species_embed[index]
 
         # print(input.shape, index.shape)
 
@@ -185,7 +177,7 @@ class SymmetricContraction(nn.Module):
                     name,
                     # nn.initializers.normal(stddev=(mul**-0.5) ** (1.0 - gradient_normalization)),
                     nn.initializers.normal(stddev=1),
-                    (species_embed.features, mul, input.shape[-2]),
+                    (num_rbf, mul, input.shape[-2]),
                 )
 
         # - This operation is parallel on the feature dimension (but each feature has its own parameters)
@@ -283,6 +275,8 @@ class EquivariantProductBasisBlock(nn.Module):
         self,
         node_feats: E3IrrepsArray,  # [n_nodes, feature * irreps]
         node_specie: jnp.ndarray,  # [n_nodes, ] int
+        ctx: Context,
+        species_embed: Float[Array, 'num_species embed_dim'] | None = None,
     ) -> E3IrrepsArray:
         node_feats = node_feats.mul_to_axis().remove_nones()
         node_feats = SymmetricContraction(
@@ -292,9 +286,9 @@ class EquivariantProductBasisBlock(nn.Module):
             gradient_normalization='element',  # NOTE: This is to copy mace-torch
             symmetric_tensor_product_basis=self.symmetric_tensor_product_basis,
             off_diagonal=self.off_diagonal,
-        )(node_feats, node_specie)
+        )(node_feats, node_specie, ctx=ctx, species_embed=species_embed)
         node_feats = node_feats.axis_to_mul()
-        return e3nn.flax.Linear(self.target_irreps)(node_feats)
+        return e3nn.flax.Linear(self.target_irreps, name='proj_out')(node_feats)
 
 
 class MessagePassingConvolution(nn.Module):
@@ -311,6 +305,7 @@ class MessagePassingConvolution(nn.Module):
         radial_embedding: jnp.ndarray,  # [n_edges, radial_embedding_dim]
         senders: jnp.ndarray,  # [n_edges, ]
         receivers: jnp.ndarray,  # [n_edges, ]
+        ctx: Context,
     ) -> E3IrrepsArray:
         """-> n_nodes irreps"""
         assert node_feats.ndim == 2
@@ -336,12 +331,24 @@ class MessagePassingConvolution(nn.Module):
         #     messages, e3nn.concatenate([one, edge_attrs.filter(drop="0e")])
         # ).filter(self.target_irreps)
 
-        mix = e3nn.flax.MultiLayerPerceptron(
-            3 * [64] + [messages.irreps.num_irreps],
-            self.activation,
-            output_activation=False,
-        )(radial_embedding)  # [n_edges, num_irreps]
+        # mix = LazyInMLP(
+        #     np.rint(np.linspace(radial_embedding.shape[-1], messages.irreps.num_irreps, 3)[1:-1])
+        #     .astype(int)
+        #     .tolist(),
+        #     out_dim=messages.irreps.num_irreps,
+        #     inner_act=self.activation,
+        #     dropout_rate=0.2,
+        # )(radial_embedding, ctx)  # [n_edges, num_irreps]
 
+        mix = LazyInMLP(
+            np.rint(np.linspace(radial_embedding.shape[-1], messages.irreps.num_irreps, 3)[1:-1])
+            .astype(int)
+            .tolist(),
+            out_dim=messages.irreps.num_irreps,
+            inner_act=self.activation,
+        )(radial_embedding, ctx)  # [n_edges, num_irreps]
+
+        # debug_structure(messages=messages.array, mix=mix.array, rad=radial_embedding.array)
         # debug_stat(messages=messages.array, mix=mix.array, rad=radial_embedding.array)
         messages = messages * mix  # [n_edges, irreps]
 
@@ -362,6 +369,7 @@ class InteractionBlock(nn.Module):
         radial_embedding: jnp.ndarray,  # [n_edges, radial_embedding_dim]
         senders: jnp.ndarray,  # [n_edges, ]
         receivers: jnp.ndarray,  # [n_edges, ]
+        ctx: Context,
     ) -> tuple[E3IrrepsArray, E3IrrepsArray]:
         """-> n_nodes irreps"""
         assert node_feats.ndim == 2
@@ -370,11 +378,14 @@ class InteractionBlock(nn.Module):
 
         node_feats = e3nn.flax.Linear(node_feats.irreps, name='linear_up')(node_feats)
         # debug_stat(up=node_feats.array)
+        node_feats = E3NormNorm()(node_feats)
 
-        node_feats = self.conv(vectors, node_feats, radial_embedding, senders, receivers)
+        node_feats = self.conv(vectors, node_feats, radial_embedding, senders, receivers, ctx)
+        node_feats = E3NormNorm()(node_feats)
         # debug_stat(conv=node_feats.array)
 
         node_feats = e3nn.flax.Linear(self.conv.target_irreps, name='linear_down')(node_feats)
+        node_feats = E3NormNorm()(node_feats)
         # debug_stat(down=node_feats.array)
 
         assert node_feats.ndim == 2
@@ -421,6 +432,8 @@ class MACELayer(nn.Module):
         radial_embedding: jnp.ndarray,  # [n_edges, radial_embedding_dim]
         senders: jnp.ndarray,  # [n_edges]
         receivers: jnp.ndarray,  # [n_edges]
+        ctx: Context,
+        species_embed: Float[Array, 'num_species num_embed'] | None = None,
         node_mask: Optional[jnp.ndarray] = None,  # [n_nodes] only used for profiling
     ):
         """-> (n_nodes output_irreps, n_nodes features*hidden_irreps)"""
@@ -456,6 +469,7 @@ class MACELayer(nn.Module):
             radial_embedding=radial_embedding,
             receivers=receivers,
             senders=senders,
+            ctx=ctx,
         )
 
         if self.epsilon is not None:
@@ -481,7 +495,7 @@ class MACELayer(nn.Module):
             num_species=self.num_species,
             symmetric_tensor_product_basis=self.symmetric_tensor_product_basis,
             off_diagonal=self.off_diagonal,
-        )(node_feats=node_feats, node_specie=node_species)
+        )(node_feats=node_feats, node_specie=node_species, species_embed=species_embed, ctx=ctx)
 
         node_feats = profile(f'{self.name}: tensor power', node_feats, node_mask[:, None])
 
@@ -533,7 +547,7 @@ class MACE(nn.Module):
     # Number of zero derivatives at small and large distances, default 4 and 2
     # If both are None, it uses a smooth C^inf envelope function
     max_ell: int = 3  # Max spherical harmonic degree, default 3
-    epsilon: Optional[float] = None
+    epsilon: Optional[float] = 1
     correlation: int = 3  # Correlation order at each layer (~ node_features^correlation), default 3
     gate: Callable = jax.nn.silu  # activation function
     soft_normalization: Optional[float] = None
@@ -541,10 +555,10 @@ class MACE(nn.Module):
     off_diagonal: bool = False
     interaction_irreps: Union[str, E3Irreps] = 'o3_restricted'  # or o3_full
     node_embedding_type: type[nn.Module] = LinearNodeEmbedding
+    share_species_embed: bool = True
     skip_connection_first_layer: bool = False
-    num_features: Optional[int] = (
-        None  # Number of features per node, default gcd of hidden_irreps multiplicities
-    )
+    # Number of features per node, default gcd of hidden_irreps multiplicities
+    num_features: Optional[int] = None
 
     def setup(self):
         self.output_irreps_calc = E3Irreps(self.output_irreps)
@@ -555,11 +569,12 @@ class MACE(nn.Module):
             self.num_features_calc = functools.reduce(
                 math.gcd, (mul for mul, _ in self.hidden_irreps_calc)
             )
-            self.hidden_irreps_calc = E3Irreps(
-                [(mul // self.num_features_calc, ir) for mul, ir in self.hidden_irreps_calc]
-            )
         else:
             self.num_features_calc = self.num_features
+
+        self.hidden_irreps_calc = E3Irreps(
+            [(mul // self.num_features_calc, ir) for mul, ir in self.hidden_irreps_calc]
+        )
 
         if self.interaction_irreps == 'o3_restricted':
             self.interaction_irreps_calc = E3Irreps.spherical_harmonics(self.max_ell)
@@ -619,6 +634,7 @@ class MACE(nn.Module):
         node_species: jnp.ndarray,  # [n_nodes] int between 0 and num_species-1
         senders: jnp.ndarray,  # [n_edges]
         receivers: jnp.ndarray,  # [n_edges]
+        ctx: Context,
         node_mask: Optional[jnp.ndarray] = None,  # [n_nodes] only used for profiling
     ) -> E3IrrepsArray:
         """
@@ -653,7 +669,9 @@ class MACE(nn.Module):
                 radial_embedding,
                 senders,
                 receivers,
-                node_mask,
+                node_mask=node_mask,
+                ctx=ctx,
+                species_embed=node_feats.array if self.share_species_embed else None,
             )
             outputs += [node_outputs]  # list of [n_nodes, output_irreps]
 
@@ -672,7 +690,7 @@ class MaceModel(nn.Module):
     num_interactions: int = 2  # Number of interactions (layers), default 2
 
     # How to combine the outputs of different interaction blocks.
-    interaction_reduction: str = 'sum'
+    interaction_reduction: str = 'mean'
     # Node reduction.
     node_reduction: SegmentReductionKind = 'mean'
 
@@ -736,49 +754,28 @@ class MaceModel(nn.Module):
         self.node_reduction_mod = SegmentReduction(self.node_reduction)
 
     def __call__(self, cg: CrystalGraphs, ctx: Context):
-        send_pos = cg.nodes.cart[cg.senders]
-        offsets = EinsOp('e abc xyz, e abc -> e xyz')(
-            cg.graph_data.lat[cg.edges.graph_i], cg.edges.to_jimage
-        )
-        recv_pos = cg.nodes.cart[cg.receivers] + offsets
-        vecs = recv_pos - send_pos
+        vecs = edge_vecs(cg)
 
         # shape [n_nodes, n_interactions, output_irreps]
-        out = self.mace(vecs, cg.nodes.species, cg.senders, cg.receivers)
+        out = self.mace(vecs, cg.nodes.species, cg.senders, cg.receivers, ctx=ctx)
 
-        # for now, only scalars and vectors are supported
-        scalar_count = out.irreps.count('0e')
-        vector_count = out.irreps.count('1o')
-
-        assert scalar_count or vector_count
-        assert scalar_count + vector_count == out.irreps.num_irreps
-
-        outputs = {}
-
-        if scalar_count:
-            # n_nodes n_blocks n_outs
-            scalar_outs = out.filter('0e').array
-            scalar_outs = EinsOp(
-                'nodes blocks outs -> nodes outs', reduce=self.interaction_reduction
-            )(scalar_outs)
-            outputs['scalars'] = self.node_reduction_mod(
-                scalar_outs, cg.nodes.graph_i, cg.n_total_graphs, ctx
+        def collect_chunk(x):
+            filtered_outs = x
+            filtered_outs = EinsOp('nodes blocks mul outs -> nodes mul outs', reduce='mean')(
+                filtered_outs
             )
+            return self.node_reduction_mod(filtered_outs, cg.nodes.graph_i, cg.n_total_graphs, ctx)
 
-        if vector_count:
-            # n_nodes n_blocks n_outs
-            vector_outs = out.filter('1o').array
-            vector_outs = EinsOp(
-                'nodes blocks outs -> nodes outs', reduce=self.interaction_reduction
-            )(vector_outs)
-            outputs['vectors'] = self.node_reduction_mod(
-                vector_outs, cg.nodes.graph_i, cg.n_total_graphs, ctx
-            )
+        out_irrep_arr = e3nn.IrrepsArray.from_list(
+            out.irreps,
+            [collect_chunk(chunk) for chunk in out.chunks],
+            leading_shape=(cg.n_total_graphs,),
+        )
 
-        if len(outputs) == 1:
-            return next(iter(outputs.values()))
+        if out_irrep_arr.irreps.is_scalar():
+            return out_irrep_arr.array
         else:
-            return outputs
+            return out_irrep_arr
 
 
 if __name__ == '__main__':

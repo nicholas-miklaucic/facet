@@ -3,15 +3,45 @@
 import functools
 from typing import Callable, Optional, Sequence
 
+import e3nn_jax as e3nn
 import einops
-from eins import EinsOp
 import jax
 import jax.numpy as jnp
+from eins import EinsOp
 from flax import linen as nn
 from flax import struct
 from jaxtyping import Array, Float
 
 from cdv.utils import debug_structure, tcheck
+
+E3Irreps = e3nn.Irreps
+E3IrrepsArray = e3nn.IrrepsArray
+
+
+import yaml
+from yaml import Dumper, Node, SafeDumper, add_representer
+
+
+def represent_irreps(d: SafeDumper, e: E3Irreps) -> Node:
+    return d.represent_str(str(e))
+
+
+def represent_irrep_array(d: SafeDumper, e: E3IrrepsArray) -> Node:
+    return d.represent_dict({'irreps': e.irreps, 'array': e.array})
+
+
+yaml.SafeDumper.add_representer(E3Irreps, represent_irreps)
+yaml.SafeDumper.add_representer(E3IrrepsArray, represent_irrep_array)
+
+
+def edge_vecs(cg):
+    send_pos = cg.nodes.cart[cg.senders]
+    offsets = EinsOp('e abc xyz, e abc -> e xyz')(
+        cg.graph_data.lat[cg.edges.graph_i], cg.edges.to_jimage
+    )
+    recv_pos = cg.nodes.cart[cg.receivers] + offsets
+    vecs = recv_pos - send_pos
+    return vecs
 
 
 class Context(struct.PyTreeNode):
@@ -40,7 +70,15 @@ class LazyInMLP(nn.Module):
 
     @tcheck
     @nn.compact
-    def __call__(self, x: Float[Array, 'n_in'], ctx: Context):
+    def __call__(self, x: Float[Array, ' n_in'], ctx: Context):
+        if isinstance(x, e3nn.IrrepsArray):
+            if not x.irreps.is_scalar():
+                raise ValueError('MLP only works on scalar (0e) input.')
+            x = x.array
+            output_irrepsarray = True
+        else:
+            output_irrepsarray = False
+
         orig_x = x
         _curr_dim = x.shape[-1]
         if self.out_dim is None:
@@ -71,16 +109,42 @@ class LazyInMLP(nn.Module):
             x = x + x_resid
 
         x = self.final_act(x)
+
+        if output_irrepsarray:
+            x = e3nn.IrrepsArray(e3nn.Irreps(f'{x.shape[-1]}x0e'), x)
+
         return x
 
 
-import e3nn_jax as e3nn
+class E3NormNorm(nn.Module):
+    eps: float = 1e-6
+
+    def __call__(self, x: E3IrrepsArray) -> E3IrrepsArray:
+        """
+        Normalizes the norm of each irrep to be mean 1.
+        """
+        normed = []
+
+        for chunk in x.chunks:
+            if chunk is None:
+                normed.append(None)
+            else:
+                norm = jnp.sum(jnp.conj(chunk) * chunk, axis=-1, keepdims=True)
+                norm = jnp.nanmean(jnp.where(norm < self.eps**2, jnp.nan, norm), keepdims=True)
+                normed.append(chunk / (norm + self.eps))
+
+        return e3nn.from_chunks(
+            x.irreps,
+            normed,
+            x.shape[:-1],
+            x.dtype,
+        )
 
 
 class DistanceEncoder(nn.Module):
     """Converts a scalar distance to an embedding."""
 
-    def __call__(self, d: Float[Array, 'batch'], ctx: Context) -> Float[Array, 'batch emb']:
+    def __call__(self, d: Float[Array, ' batch'], ctx: Context) -> Float[Array, 'batch emb']:
         raise NotImplementedError
 
 
@@ -95,7 +159,7 @@ class GaussBasis(DistanceEncoder):
     def setup(self):
         self.locs = jnp.linspace(self.lo, self.hi, self.emb)
 
-    def __call__(self, d: Float[Array, 'batch'], ctx: Context) -> Float[Array, 'batch emb']:
+    def __call__(self, d: Float[Array, ' batch'], ctx: Context) -> Float[Array, 'batch emb']:
         z = d[:, None] - self.locs[None, :]
         y = jnp.exp(-(z**2) / (2 * self.sd**2))
         return y
@@ -268,7 +332,7 @@ class MLPMixer(nn.Module):
                 channels_mlp=self.channels_mlp.copy(),
                 dropout_rate=self.dropout_rate,
                 attention_dropout_rate=self.attention_dropout_rate,
-            )(x, abys, training=ctx.training)
+            )(x, abys, ctx=ctx)
         # Output Head
         x = nn.LayerNorm(dtype=x.dtype, name='pre_head_layer_norm')(x)
         return x

@@ -1,6 +1,6 @@
 batch_size = 63
 do_profile = false
-num_epochs = 100
+num_epochs = 20
 regressor = "mace"
 task = "e_form"
 
@@ -23,7 +23,7 @@ show_progress = true
 [device]
 device = "gpu"
 max_gpus = 1
-gpu_ids = []
+gpu_ids = [1]
 
 [log]
 log_dir = "logs"
@@ -35,20 +35,21 @@ lr_schedule_kind = "cosine"
 start_lr_frac = 0.1
 base_lr = 4e-3
 end_lr_frac = 0.04
-weight_decay = 0.15
+weight_decay = 0.05
 beta_1 = 0.9
 beta_2 = 0.999
 nestorov = true
 max_grad_norm = 1.0
 schedule_free = false
-prodigy = true
+prodigy = false
 
 [mace]
 max_ell = 2
-num_interactions = 4
-hidden_irreps = "256x0e + 64x1o"
+# num_interactions = 5
+num_interactions = 5
+hidden_irreps = "256x0e"
 correlation = 2
-readout_mlp_irreps = "128x0e + 16x1o"
+readout_mlp_irreps = "256x0e"
 
 [train.loss.reg_loss]
 loss_delta = 0.015625

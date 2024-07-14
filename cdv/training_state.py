@@ -132,7 +132,7 @@ class TrainingRun:
             metric_updates = dict(mae=mae, loss=loss, rmse=rmse, grad_norm=state.last_grad_norm)
         elif task == 'vae':
             preds = state.apply_fn(state.params, batch, ctx=Context(training=False), rngs=rng)
-            loss_dict = vae_loss(config, batch, *preds)
+            loss_dict = vae_loss(config, batch, preds)
             metric_updates = dict(grad_norm=state.last_grad_norm, **loss_dict)
         elif task == 'diled':
             losses = state.apply_fn(state.params, batch, ctx=Context(training=False), rngs=rng)
@@ -165,7 +165,7 @@ class TrainingRun:
                 return loss
             elif task == 'vae':
                 preds = state.apply_fn(params, batch, ctx=Context(training=True), rngs=rngs)
-                return vae_loss(config, batch, *preds)['loss'].mean()
+                return vae_loss(config, batch, preds)['loss'].mean()
             else:
                 losses = state.apply_fn(params, batch, ctx=Context(training=True), rngs=rngs)
                 return losses['loss'].mean()

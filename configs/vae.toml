@@ -1,7 +1,7 @@
 batch_size = 63
 do_profile = false
-num_epochs = 20
-regressor = "cogn"
+num_epochs = 50
+regressor = "mace"
 task = "vae"
 
 [data]
@@ -28,80 +28,29 @@ gpu_ids = [1]
 [log]
 log_dir = "logs"
 logs_per_epoch = 8
+exp_name = "mace_vae"
 
 [train]
 lr_schedule_kind = "cosine"
 start_lr_frac = 0.1
-base_lr = 3e-4
+base_lr = 4e-3
 end_lr_frac = 0.04
-weight_decay = 0.1
+weight_decay = 0.01
 beta_1 = 0.9
 beta_2 = 0.999
 nestorov = true
-max_grad_norm = 3.0
+max_grad_norm = 1.0
+schedule_free = false
+prodigy = false
+
+[mace]
+max_ell = 2
+# num_interactions = 5
+num_interactions = 3
+hidden_irreps = "512x0e + 128x1o + 64x2e"
+correlation = 2
+readout_mlp_irreps = "128x0e + 32x1o + 16x2e"
 
 [train.loss.reg_loss]
 loss_delta = 0.015625
 use_rmse = false
-
-[cogn]
-node_dim = 256
-edge_dim = 256
-num_blocks = 5
-
-[cogn.dist_enc]
-lo = 0
-hi = 8
-sd = 1
-emb = 32
-
-[cogn.msg_layer]
-inner_dims = [128, 256]
-activation = "swish"
-final_activation = "Identity"
-dropout = 0.0
-residual = false
-num_heads = 1
-
-[cogn.node_layer]
-inner_dims = [256]
-activation = "swish"
-final_activation = "Identity"
-dropout = 0.0
-residual = false
-num_heads = 1
-
-[cogn.node_update_reduction]
-reduction = "mean"
-kind = "fishnet"
-fishnet_inner = 32
-
-[cogn.node_update_reduction.fishnet_mod]
-inner_dims = [256]
-activation = "swish"
-final_activation = "Identity"
-dropout = 0.0
-residual = false
-num_heads = 1
-
-[cogn.node_agg_reduction]
-reduction = "sum"
-kind = "simple"
-fishnet_inner = 32
-
-[cogn.node_agg_reduction.fishnet_mod]
-inner_dims = []
-activation = "swish"
-final_activation = "Identity"
-dropout = 0.0
-residual = false
-num_heads = 1
-
-[cogn.readout_head]
-inner_dims = [256, 256]
-activation = "swish"
-final_activation = "Identity"
-out_dim = 1
-dropout = 0.2
-residual = false
-num_heads = 1
