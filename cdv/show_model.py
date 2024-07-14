@@ -46,19 +46,18 @@ def show_model(config: MainConfig, make_hlo_dot=False, do_profile=False):
     kwargs.update(enc_batch)
     out, params = mod.init_with_output(rngs, **kwargs)
     # print(params['params']['edge_proj']['kernel'].devices())
-    debug_structure(module=mod)
+    # debug_structure(module=mod, out=out)
     # debug_stat(input=batch)
-    debug_stat(out=out)
     rngs.pop('params')
-    # flax_summary(mod, rngs=rngs, **kwargs)
+    flax_summary(mod, rngs=rngs, **kwargs)
 
+    debug_stat(out=out)
+    kwargs['cg'], rots = kwargs['cg'].rotate(123)
+    rot_out = mod.apply(params, kwargs['cg'], rngs=rngs, ctx=Context(training=True))
     if config.task == 'e_form':
-        kwargs['cg'], rots = kwargs['cg'].rotate(123)
-        rot_out = mod.apply(params, kwargs['cg'], rngs=rngs, ctx=Context(training=True))
-        debug_stat(
-            equiv_error=jnp.abs(rot_out - out)
-            / (jnp.maximum(jnp.abs(out), jnp.abs(rot_out)) + 1e-10)
-        )
+        debug_stat(equiv_error=jnp.abs(rot_out - out))
+    elif config.task == 'vae':
+        debug_stat(equiv_error=jax.tree.map(lambda x, y: jnp.abs(x - y), rot_out, out))
 
     def loss(params):
         preds = mod.apply(params, batch, rngs=rngs, ctx=Context(training=True))

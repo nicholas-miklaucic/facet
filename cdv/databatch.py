@@ -17,6 +17,19 @@ DIMENSIONALITIES = [
     'intercalated molecule',
 ]
 
+CRYSTAL_SYSTEMS = [
+    'triclinic',
+    'monoclinic',
+    'orthorhombic',
+    'tetragonal',
+    'trigonal',
+    'hexagonal',
+    'cubic',
+]
+
+# first space group of a given crystal system
+CRYSTAL_SYSTEM_THRESHOLDS = jnp.array([3, 16, 75, 143, 168, 195])[None, :]
+
 e3nn.reduced_tensor_product_basis(['1o', '1o']).array.transpose(2, 0, 1).round(2)
 
 
@@ -145,6 +158,12 @@ class CrystalGraphs(struct.PyTreeNode):
             ['0e', '1e', '2e'],
             jnp.einsum('ai, bi -> ba', basis.reshape(-1, 9), self.metric_tensor.reshape(-1, 9)),
         ).filter(drop='1e')
+
+    @property
+    def crystal_system_code(self) -> Int[Array, ' n_graphs']:
+        """Assigns to one of the 7 crystal systems."""
+        sgs = self.graph_data.space_group[:, None]
+        return (sgs < CRYSTAL_SYSTEM_THRESHOLDS).sum(axis=-1)
 
     def __add__(self, other: 'CrystalGraphs') -> 'CrystalGraphs':
         """Collates both objects together, taking care to deal with index offsets."""

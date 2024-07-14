@@ -1,7 +1,7 @@
 """Layers useful in different contexts."""
 
 import functools
-from typing import Callable, Optional, Sequence
+from typing import Callable, Literal, Optional, Sequence
 
 import e3nn_jax as e3nn
 import einops
@@ -67,6 +67,7 @@ class LazyInMLP(nn.Module):
     dropout_rate: float = 0.0
     kernel_init: Callable = nn.initializers.glorot_normal()
     bias_init: Callable = nn.initializers.truncated_normal()
+    normalization: Literal['layer', 'weight', 'none'] = 'layer'
 
     @tcheck
     @nn.compact
@@ -86,13 +87,19 @@ class LazyInMLP(nn.Module):
         else:
             out_dim = self.out_dim
 
+        if self.normalization == 'weight':
+            Dense = lambda *args, **kwargs: nn.WeightNorm(nn.Dense(*args, **kwargs))
+        else:
+            Dense = nn.Dense
+
         for next_dim in self.inner_dims:
-            x = nn.Dense(
+            x = Dense(
                 next_dim, kernel_init=self.kernel_init, bias_init=self.bias_init, dtype=x.dtype
             )(x)
             x = self.inner_act(x)
             x = nn.Dropout(self.dropout_rate, deterministic=not ctx.training)(x)
-            x = nn.LayerNorm(dtype=x.dtype)(x)
+            if self.normalization == 'layer':
+                x = nn.LayerNorm(dtype=x.dtype)(x)
             _curr_dim = next_dim
 
         x = nn.Dense(
@@ -100,7 +107,7 @@ class LazyInMLP(nn.Module):
         )(x)
         if self.residual:
             if orig_x.shape[-1] != out_dim:
-                x_resid = nn.Dense(
+                x_resid = Dense(
                     out_dim, kernel_init=self.kernel_init, bias_init=self.bias_init, dtype=x.dtype
                 )(orig_x)
             else:
@@ -119,10 +126,11 @@ class LazyInMLP(nn.Module):
 class E3NormNorm(nn.Module):
     eps: float = 1e-6
 
-    def __call__(self, x: E3IrrepsArray) -> E3IrrepsArray:
+    def __call__(self, x: 'E3IrrepsArray') -> 'E3IrrepsArray':
         """
         Normalizes the norm of each irrep to be mean 1.
         """
+        return x
         normed = []
 
         for chunk in x.chunks:
@@ -130,7 +138,9 @@ class E3NormNorm(nn.Module):
                 normed.append(None)
             else:
                 norm = jnp.sum(jnp.conj(chunk) * chunk, axis=-1, keepdims=True)
-                norm = jnp.nanmean(jnp.where(norm < self.eps**2, jnp.nan, norm), keepdims=True)
+                norm = jnp.nanmean(
+                    jnp.where(norm < self.eps**2, jnp.nan, jnp.sqrt(norm + self.eps)), keepdims=True
+                )
                 normed.append(chunk / (norm + self.eps))
 
         return e3nn.from_chunks(

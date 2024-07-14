@@ -53,6 +53,9 @@ class LogConfig:
     # 208 = 2^4 * 13 steps per epoch with batch of 1: evenly dividing this is nice.
     logs_per_epoch: int = 8
 
+    # Checkpoint every n epochs:
+    epochs_per_ckpt: int = 2
+
 
 @dataclass
 class DataConfig:
@@ -413,6 +416,8 @@ class MACEConfig:
     # hidden_irreps = '16x0e + 16x1o'
     correlation: int = 3  # 4 is better but 5x slower
     readout_mlp_irreps: str = '16x0e'
+    interaction_reduction: str = 'mean'
+    node_reduction: str = 'mean'
 
     def build(self, num_species: int, output_irreps: str) -> MaceModel:
         return MaceModel(
@@ -423,6 +428,8 @@ class MACEConfig:
             output_irreps=str(e3nn_jax.Irreps(output_irreps)),
             num_species=num_species,
             correlation=self.correlation,
+            interaction_reduction=self.interaction_reduction,
+            node_reduction=self.node_reduction,
         )
 
 
@@ -448,7 +455,11 @@ class RegressionLossConfig:
         return y * self.loss_delta
 
     def regression_loss(self, preds, targets, mask):
-        mask = mask.reshape(preds.shape)
+        if preds.shape != targets.shape:
+            msg = f'Incorrect input shapes: {preds.shape} != {targets.shape}'
+            raise ValueError(msg)
+        if preds.ndim == 2:
+            mask = mask[:, None]
         if self.use_rmse:
             return jnp.sqrt(optax.losses.squared_error(preds, targets).mean(where=mask))
         else:

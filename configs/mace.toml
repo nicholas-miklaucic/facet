@@ -9,9 +9,9 @@ dataset_name = "jarvis_dft3d_cleaned"
 raw_data_folder = "data"
 data_folder = "precomputed"
 shuffle_seed = 1618
-train_split = 22
-test_split = 2
-valid_split = 2
+train_split = 10
+test_split = 15
+valid_split = 1
 batch_n_nodes = 512
 batch_n_edges = 9872
 batch_n_graphs = 64
@@ -28,7 +28,7 @@ gpu_ids = [1]
 [log]
 log_dir = "logs"
 logs_per_epoch = 8
-exp_name = "mace_base"
+epochs_per_ckpt = 1
 
 [train]
 lr_schedule_kind = "cosine"
@@ -46,7 +46,7 @@ prodigy = false
 [mace]
 max_ell = 2
 # num_interactions = 5
-num_interactions = 5
+num_interactions = 2
 hidden_irreps = "256x0e"
 correlation = 2
 readout_mlp_irreps = "256x0e"

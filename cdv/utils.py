@@ -157,6 +157,8 @@ class StatsVisitor(TreeVisitor):
             if (abs(mu) > 1000 or sd > 1000) or (1e-5 < abs(mu) < 1e-2 and 1e-5 < sd < 1e-2):
                 factor = round(np.log10(max(abs(mu), sd)))
                 x = x / 10**factor
+                lo = lo / 10**factor
+                hi = hi / 10**factor
                 summary += f' E{factor}'
             else:
                 factor = 0
