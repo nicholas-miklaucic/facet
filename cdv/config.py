@@ -38,7 +38,7 @@ from cdv.layers import Identity, LazyInMLP, MLPMixer
 from cdv.mace import MaceModel
 from cdv.mlp_mixer import MLPMixerRegressor, O3ImageEmbed
 from cdv.utils import ELEM_VALS
-from cdv.vae import Encoder
+from cdv.vae import VAE, Decoder, Encoder, LatentSpace, LatticeVAE, PropertyPredictor
 
 pyrallis.set_config_type('toml')
 
@@ -419,13 +419,18 @@ class MACEConfig:
     interaction_reduction: str = 'mean'
     node_reduction: str = 'mean'
 
-    def build(self, num_species: int, output_irreps: str) -> MaceModel:
+    def build(
+        self, num_species: int, output_graph_irreps: str, output_node_irreps: str | None = None
+    ) -> MaceModel:
         return MaceModel(
             max_ell=self.max_ell,
             num_interactions=self.num_interactions,
             hidden_irreps=str(e3nn_jax.Irreps(self.hidden_irreps)),
             readout_mlp_irreps=str(e3nn_jax.Irreps(self.readout_mlp_irreps)),
-            output_irreps=str(e3nn_jax.Irreps(output_irreps)),
+            output_graph_irreps=str(e3nn_jax.Irreps(output_graph_irreps)),
+            output_node_irreps=str(e3nn_jax.Irreps(output_node_irreps))
+            if output_node_irreps
+            else None,
             num_species=num_species,
             correlation=self.correlation,
             interaction_reduction=self.interaction_reduction,
@@ -616,8 +621,16 @@ class MainConfig:
 
     def build_vae(self):
         # output irreps gets changed
-        enc = Encoder(self.mace.build(self.data.num_species, '0e'))
-        return enc
+        return VAE(
+            Encoder(
+                self.mace.build(self.data.num_species, '0e', None),
+                latent_dim=128,
+                latent_space=LatticeVAE(),
+            ),
+            PropertyPredictor(LazyInMLP([128, 64, 32], dropout_rate=0.3)),
+            Decoder(self.mace.build(self.data.num_species, '0e', None)),
+            prop_reg_loss=self.train.loss.regression_loss,
+        )
 
     def build_regressor(self):
         if self.regressor == 'cogn':

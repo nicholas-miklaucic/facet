@@ -1,6 +1,7 @@
 """Variational autoencoder for materials."""
 
-from eins import EinsOp
+from typing import Callable, Mapping
+from eins import EinsOp, Reductions as R
 from flax import linen as nn
 from flax import struct
 import jax
@@ -11,53 +12,192 @@ from cdv.gnn import GN, InputEncoder, NodeAggReadout, ProcessingBlock, Readout
 from cdv.layers import Context, E3Irreps, E3IrrepsArray, LazyInMLP
 from jaxtyping import Float, Array
 import jax.numpy as jnp
+import jax.random as jr
 
 from cdv.mace import MaceModel
 from cdv.utils import debug_structure
 
 
-class EncoderOutput(struct.PyTreeNode):
+class LatentOutput(struct.PyTreeNode):
+    output: Float[Array, 'batch latent']
+    loss: Float[Array, ' batch']
+    losses: Mapping[str, Float[Array, ' batch']]
+
+
+class LatentSpace(nn.Module):
+    """Latent space: abstracts different priors and quantizations."""
+
+    def __call__(self, z_e: Float[Array, 'batch latent'], ctx: Context) -> LatentOutput:
+        raise NotImplementedError
+
+
+class LatticeVAE(LatentSpace):
+    """Lattice VAE (https://arxiv.org/pdf/2310.09382)."""
+
+    desired_codebook_size: float = 512
+    commitment_cost: float = 0.25
+    # default is 1?
+    sparsity_penalty: float = 0.01
+
+    @nn.compact
+    def __call__(self, z_e: Float[Array, 'batch latent'], ctx: Context) -> LatentOutput:
+        def lattice_init(key, shape, dtype):
+            scale = 1 / (self.desired_codebook_size ** (1 / shape[-1]) - 1)
+            return jax.random.uniform(key, shape, dtype, -scale, scale)
+
+        B = self.param('lattice', lattice_init, (z_e.shape[-1],), z_e.dtype)
+
+        # round each dimension to the nearest multiple of the corresponding scale in B
+        quantized = jnp.rint(z_e / B) * B
+
+        sg = jax.lax.stop_gradient
+
+        sparsity_loss = jnp.mean(jnp.abs(B))
+        commitment_loss = R.mean(R.sum((z_e - sg(quantized)) ** 2, axis=-1))
+        embedding_loss = R.mean(R.sum((sg(z_e) - quantized) ** 2, axis=-1))
+
+        losses = {
+            'sparsity': -self.sparsity_penalty * sparsity_loss,
+            'commitment': self.commitment_cost * commitment_loss,
+            'embed': embedding_loss,
+        }
+
+        total_loss = losses['sparsity'] + losses['commitment'] + losses['embed']
+
+        return LatentOutput(quantized, total_loss, losses)
+
+
+class PropertyOutput(struct.PyTreeNode):
     e_form: Float[Array, 'graphs 1']
     abc_aby: Float[Array, 'graphs 6']
     crystal_system: Float[Array, 'graphs 7']
 
 
-class Encoder(nn.Module):
-    """Encoder."""
-
-    model: MaceModel
-    output_mlp: LazyInMLP
-    output_dim: int = 256
-
-    def setup(self):
-        e_form = '1x0e'
-        lattice = '6x0e'
-        crystal_system = '7x0e'
-        self.mace = self.model.copy(output_irreps=f'{e_form} + {lattice} + {crystal_system}')
-        self.head = self.output_mlp.copy(out_dim=1)
-
-    def __call__(self, cg: CrystalGraphs, ctx: Context) -> EncoderOutput:
-        output_irreps = self.mace(cg, ctx)
-
-        return EncoderOutput(
-            output_irreps.slice_by_chunk[:1].array,
-            output_irreps.slice_by_chunk[1:2].array,
-            output_irreps.slice_by_chunk[2:].array,
-        )
-
-
-def vae_loss(config: ' LossConfig', cg: CrystalGraphs, preds: EncoderOutput):
+def prop_loss(regression_loss, cg: CrystalGraphs, preds: PropertyOutput):
     lat_params = jnp.concat([cg.graph_data.abc, cg.graph_data.angles_rad], axis=-1)
-    lat_loss = config.regression_loss(preds.abc_aby, lat_params, cg.padding_mask)
+    lat_loss = regression_loss(preds.abc_aby, lat_params, cg.padding_mask)
     sym_loss = optax.softmax_cross_entropy_with_integer_labels(
         preds.crystal_system, cg.crystal_system_code
     )
     sym_loss = jnp.mean(sym_loss, where=cg.padding_mask)
     losses = {
-        'e_form': config.regression_loss(preds.e_form.squeeze(-1), cg.e_form, cg.padding_mask),
+        'e_form': regression_loss(preds.e_form.squeeze(-1), cg.e_form, cg.padding_mask),
         'lat': lat_loss * 0.3,
         'sym': sym_loss * 0.3,
     }
 
     losses['loss'] = jnp.sum(jnp.stack(list(losses.values())), axis=0)
     return losses
+
+
+class PropertyPredictor(nn.Module):
+    """Property predictor using encoded latents."""
+
+    output_mlp: LazyInMLP
+
+    @nn.compact
+    def __call__(self, z: Float[Array, 'graphs latent'], ctx: Context) -> PropertyOutput:
+        scalar_splits = (1, 6, 7)
+        head = self.output_mlp.copy(out_dim=sum(scalar_splits))
+
+        head_output = head(z, ctx)
+
+        splits = []
+        for split in scalar_splits:
+            splits.append(head_output[..., :split])
+            head_output = head_output[..., split:]
+
+        assert head_output.size == 0, 'Leftover outputs'
+
+        return PropertyOutput(*splits)
+
+
+class Encoder(nn.Module):
+    encoder_model: MaceModel
+    latent_space: LatentSpace
+    latent_dim: int = 128
+
+    def setup(self):
+        self.encoder = self.encoder_model.copy(
+            output_graph_irreps=f'{self.latent_dim}x0e', output_node_irreps=None
+        )
+
+    def __call__(self, cg: CrystalGraphs, ctx: Context) -> LatentOutput:
+        graph_out, node_out = self.encoder(cg, ctx)
+        # in future, maybe this could have other irreps, but for now just scalars
+        assert node_out is None
+        assert graph_out.irreps.is_scalar()
+        z_e = graph_out.array
+        latent_out = self.latent_space(z_e, ctx=ctx)
+        return latent_out
+
+
+class Decoder(nn.Module):
+    decoder_model: MaceModel
+
+    def setup(self):
+        self.decoder = self.decoder_model.copy(output_node_irreps='1x1o', output_graph_irreps=None)
+
+    def __call__(
+        self, cg: CrystalGraphs, latent: LatentOutput, ctx: Context
+    ) -> Float[Array, 'nodes 3']:
+        graph_out, node_out = self.decoder(cg, ctx, global_feats=latent.output)
+        return node_out.array
+
+
+class VAE(nn.Module):
+    encoder: Encoder
+    prop_head: PropertyPredictor
+    decoder: Decoder
+    prop_reg_loss: Callable
+
+    coord_noise_scale: float = 0.01
+
+    def setup(self):
+        pass
+
+    def add_coord_noise(
+        self, cg: CrystalGraphs, ctx: Context
+    ) -> tuple[Float[Array, 'nodes 3'], CrystalGraphs]:
+        """
+        Adds noise to coordinates. Does not recompute edges: changes are assumed to be local.
+        """
+        key = self.make_rng('noise')
+
+        noise = jr.normal(key, cg.nodes.cart.shape, cg.nodes.cart.dtype) * self.coord_noise_scale
+
+        new_carts = cg.nodes.cart + noise
+
+        cg = cg.replace(nodes=cg.nodes.replace(cart=new_carts, frac=None))
+        return noise, cg
+
+    def __call__(self, cg: CrystalGraphs, ctx: Context):
+        z = self.encoder(cg, ctx)
+        eps, noisy_cg = self.add_coord_noise(cg, ctx)
+        eps_rec = self.decoder(noisy_cg, z, ctx)
+
+        rec_err = EinsOp('nodes 3 -> nodes', reduce='l2_norm')(
+            # flip eps_rec: decoder predicts denoising, eps is noise
+            (-eps_rec - eps) / self.coord_noise_scale
+        )
+        node_mask = cg.padding_mask[cg.nodes.graph_i]
+        rec_err = jnp.mean(rec_err, where=node_mask)
+
+        # scale rec_loss by this or not?
+        # nodes_per_graph = jnp.sum(node_mask.astype(jnp.float_)) / jnp.sum(
+        #     cg.padding_mask.astype(jnp.float_)
+        # )
+
+        losses = z.losses
+        losses['sparsity'] = abs(losses['sparsity'])
+        losses['rec'] = rec_err
+        losses['enc'] = abs(z.loss)
+
+        prop_pred = self.prop_head(z.output, ctx)
+        prop_losses = prop_loss(self.prop_reg_loss, cg, prop_pred)
+
+        losses['prop'] = prop_losses.pop('loss')
+        losses.update(**prop_losses)
+
+        losses['loss'] = z.loss + losses['rec'] + losses['prop']
+        return losses

@@ -2,48 +2,36 @@
 
 A reimplementation of CDVAE, planning to add more.
 
-Questions:
-- Is it normal for every atom to have the max number of neighbors (20)?
-
-
-Things to do:
-
-- Implement full multigraph stuff in graph processing
-- Fudge incoming indices
-- Implement decoder
-
-
-## Hacks
-
-The monkey patching I've done to make things work:
-
-e3nn mlp flax needs 
-
-```py
-kernel_init=flax.linen.initializers.variance_scaling(
-    scale=2.0,
-    mode='fan_in',
-    distribution='truncated_normal'
-    # stddev=scale
-    # stddev=1
-),
-```
-
-and a corresponding change in the output
-
 
 ## Improvements
 
-### Normalization
-LayerNorm needs to be adapted to E(3) code: otherwise, it's quite challenging to normalize across
-different architectures. The existing code is far too brittle.
+### Composition Prediction
+CDVAE uses fractional atom compositions as the output of the property predictor, along with the
+number of atoms. This seems terrible to me: compositions aren't independent Bernoulli events. It
+would make a lot of sense for NaCl and KCl to have similar latents, but NaKCl2 is not in any way
+similar to the "average" of the two.
 
-### Cost Analysis
-I need to do a serious analysis of how the parameters should best be utilized.
+For a first go, we can try a transformer with sorted element types. Later, it may make sense to have
+some architecture that builds in permutation equivariance and doesn't need a canonical ordering of
+elements.
 
-### Node Embeddings
-Instead of using 72 individual sets of matrices, have a smaller set of weight matrices that are
-combined based on the embedding of each node.
+### Lattice Denoising
+One network uses a somewhat strange lattice denoising loss where each edge has a score indicating how
+much it would lengthen or contract and the lattice is adjusted to balance out those forces. That
+requires edge-specific scores, which goes against the whole idea of the MACE architecture and scales
+poorly. I've had serious issues representing the lattice as a metric tensor, and I think perhaps
+Cond-CDVAE is the better approach: simply predict the new lattice vector.
+
+It's unclear how to combine this with Cartesian coordinate diffusion. I think the best solution is
+probably to only consider first-order effects: the lattice changing will affect the distances
+between edges. If denoising is done sequentially, the coordinates will have to be projected back
+into the unit cell, but that can be done without taking gradients while edges are being recomputed.
 
 ### Global Conditioning
-How to incorporate into the network? Attach to node embeddings?
+CDVAE concatenates the global latent $z$ and uses an MLP to project a new node embedding from the
+concatenation of the latent and the atom type embedding.
+
+There are potentially other solutions that would make sense, and I worry that it will be very
+difficult for the decoder to properly use the latent if it's only used at the very start and
+immediately projected down. Perhaps parameterizing the message passing with a global latent would
+help.

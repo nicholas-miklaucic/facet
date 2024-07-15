@@ -1,6 +1,6 @@
 batch_size = 63
 do_profile = false
-num_epochs = 20
+num_epochs = 50
 regressor = "mace"
 task = "vae"
 
@@ -9,9 +9,9 @@ dataset_name = "jarvis_dft3d_cleaned"
 raw_data_folder = "data"
 data_folder = "precomputed"
 shuffle_seed = 1618
-train_split = 10
-test_split = 14
-valid_split = 2
+train_split = 5
+test_split = 20
+valid_split = 1
 batch_n_nodes = 512
 batch_n_edges = 9872
 batch_n_graphs = 64
@@ -28,14 +28,15 @@ gpu_ids = [1]
 [log]
 log_dir = "logs"
 logs_per_epoch = 8
-epochs_per_ckpt = 1
+epochs_per_ckpt = 2
+exp_name = 'mace_vae'
 
 [train]
 lr_schedule_kind = "cosine"
-start_lr_frac = 0.1
+start_lr_frac = 0.01
 base_lr = 4e-3
 end_lr_frac = 0.04
-weight_decay = 0.05
+weight_decay = 0.01
 beta_1 = 0.9
 beta_2 = 0.999
 nestorov = true
@@ -47,9 +48,9 @@ prodigy = false
 max_ell = 2
 # num_interactions = 5
 num_interactions = 2
-hidden_irreps = "64x0e + 16x1o"
+hidden_irreps = "128x0e + 128x1o"
 correlation = 2
-readout_mlp_irreps = "64x0e + 16x1o"
+readout_mlp_irreps = "128x0e + 128x1o"
 node_reduction = "mean"
 interaction_reduction = "mean"
 

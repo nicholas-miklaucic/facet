@@ -9,7 +9,7 @@ from cdv.config import MainConfig
 from cdv.dataset import dataloader, load_file
 from cdv.layers import Context
 from cdv.utils import debug_stat, debug_structure, flax_summary
-from cdv.vae import vae_loss
+from cdv.vae import prop_loss
 
 
 # https://bnikolic.co.uk/blog/python/jax/2022/02/22/jax-outputgraph-rev.html
@@ -31,7 +31,7 @@ def show_model(config: MainConfig, make_hlo_dot=False, do_profile=False):
     elif config.task == 'vae':
         mod = config.build_vae()
         enc_batch = {'cg': batch}
-        rngs = {}
+        rngs = {'noise': jax.random.key(123)}
     elif config.task == 'diled':
         mod = config.build_diled()
         enc_batch = {
@@ -67,8 +67,6 @@ def show_model(config: MainConfig, make_hlo_dot=False, do_profile=False):
                     preds, batch.graph_data.e_form.reshape(-1, 1), batch.padding_mask
                 )
             }
-        elif config.task == 'vae':
-            return vae_loss(config.train.loss, batch, preds)
         else:
             return preds
 

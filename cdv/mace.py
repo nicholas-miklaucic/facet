@@ -32,7 +32,8 @@ class LinearNodeEmbedding(nn.Module):
 
     def setup(self):
         self.irreps_out_calc = E3Irreps(self.irreps_out).filter('0e').regroup()
-        self.embed = nn.Embed(self.num_species, E3Irreps(self.irreps_out_calc).dim)
+        self.out_dim = E3Irreps(self.irreps_out_calc).dim
+        self.embed = nn.Embed(self.num_species, self.out_dim)
 
     def __call__(self, node_species: Int[Array, ' batch']) -> E3IrrepsArray:
         return E3IrrepsArray(self.irreps_out_calc, self.embed(node_species))
@@ -63,9 +64,12 @@ class NonLinearReadoutBlock(nn.Module):
         num_vectors = hidden_irreps.filter(
             drop=['0e', '0o']
         ).num_irreps  # Multiplicity of (l > 0) irreps
+        # print(x.irreps)
         x = Linear(
             (hidden_irreps + E3Irreps(f'{num_vectors}x0e')).simplify(),
         )(x)
+        # print((hidden_irreps + E3Irreps(f'{num_vectors}x0e')).simplify())
+        # print(x.irreps)
         x = e3nn.gate(x, even_act=self.activation, even_gate_act=self.gate)
         return Linear(output_irreps)(x)
 
@@ -447,7 +451,6 @@ class MACELayer(nn.Module):
         if node_mask is None:
             node_mask = jnp.ones(node_species.shape[0], dtype=jnp.bool_)
 
-        node_feats = profile(f'{self.name}: input', node_feats, node_mask[:, None])
         hidden_irreps = E3Irreps(self.hidden_irreps)
         output_irreps = E3Irreps(self.output_irreps)
         interaction_irreps = E3Irreps(self.interaction_irreps)
@@ -570,6 +573,8 @@ class MACE(nn.Module):
     # Number of features per node, default gcd of hidden_irreps multiplicities
     num_features: Optional[int] = None
 
+    global_proj_templ: LazyInMLP = LazyInMLP([])
+
     def setup(self):
         self.output_irreps_calc = E3Irreps(self.output_irreps)
         self.hidden_irreps_calc = E3Irreps(self.hidden_irreps)
@@ -613,6 +618,10 @@ class MACE(nn.Module):
                 if not last
                 else E3Irreps(self.hidden_irreps_calc).filter(self.output_irreps_calc)
             )
+
+            # to output just a vector, there needs to be enough scalars to do the gating. I'm not
+            # sure why the above code filters the way it does.
+            hidden_irreps = E3Irreps(self.hidden_irreps_calc)
             layers.append(
                 MACELayer(
                     first=first,
@@ -638,6 +647,8 @@ class MACE(nn.Module):
 
         self.layers = layers
 
+        self.global_proj_mlp = self.global_proj_templ.copy(out_dim=self.node_embedding.out_dim)
+
     def __call__(
         self,
         vectors: E3IrrepsArray,  # [n_edges, 3]
@@ -645,9 +656,11 @@ class MACE(nn.Module):
         senders: jnp.ndarray,  # [n_edges]
         receivers: jnp.ndarray,  # [n_edges]
         ctx: Context,
+        extra_node_features: jnp.ndarray | None = None,
         node_mask: Optional[jnp.ndarray] = None,  # [n_nodes] only used for profiling
     ) -> E3IrrepsArray:
         """
+        global_features: latent vector to be incorporated into initial node embeddings
         -> n_nodes num_interactions output_irreps
         """
         assert vectors.ndim == 2 and vectors.shape[1] == 3
@@ -662,7 +675,14 @@ class MACE(nn.Module):
         node_feats = self.node_embedding(node_species).astype(
             vectors.dtype
         )  # [n_nodes, feature * irreps]
-        node_feats = profile('embedding: node_feats', node_feats, node_mask[:, None])
+
+        if extra_node_features is not None:
+            node_feat_arr = self.global_proj_mlp(
+                jnp.concat([node_feats.array, extra_node_features], axis=-1), ctx
+            )
+            node_feats = E3IrrepsArray(node_feats.irreps, node_feat_arr)
+
+        # print(node_feats)
 
         if not (hasattr(vectors, 'irreps') and hasattr(vectors, 'array')):
             vectors = E3IrrepsArray('1o', vectors)
@@ -693,7 +713,8 @@ class MaceModel(nn.Module):
     """Graph network that wraps MACE."""
 
     num_species: int
-    output_irreps: str  # output irreps, 1x0e for scalar
+    output_graph_irreps: str  # output irreps, 1x0e for scalar
+    output_node_irreps: str | None  # output by-node irreps
     hidden_irreps: str  # 256x0e or 128x0e + 128x1o
     readout_mlp_irreps: str  # Hidden irreps of the MLP in last readout, default 16x0e
 
@@ -764,16 +785,33 @@ class MaceModel(nn.Module):
 
         self.node_reduction_mods = [
             SegmentReduction(self.node_reduction)
-            for _chunk in E3Irreps(self.output_irreps).slices()
+            for _chunk in E3Irreps(self.output_graph_irreps).slices()
         ]
 
-    def __call__(self, cg: CrystalGraphs, ctx: Context):
+    def __call__(
+        self,
+        cg: CrystalGraphs,
+        ctx: Context,
+        global_feats: Float[Array, 'graphs latent'] | None = None,
+    ):
         vecs = edge_vecs(cg)
 
-        # shape [n_nodes, n_interactions, output_irreps]
-        out = self.mace(vecs, cg.nodes.species, cg.senders, cg.receivers, ctx=ctx)
+        if global_feats is None:
+            extra_node_feats = None
+        else:
+            extra_node_feats = global_feats[cg.nodes.graph_i]
 
-        def collect_chunk(x, mod):
+        # shape [n_nodes, n_interactions, output_irreps]
+        out = self.mace(
+            vecs,
+            cg.nodes.species,
+            cg.senders,
+            cg.receivers,
+            ctx=ctx,
+            extra_node_features=extra_node_feats,
+        )
+
+        def collect_chunk(x, i):
             filtered_outs = x
             if self.interaction_reduction == 'last':
                 filtered_outs = filtered_outs[:, -1, :, :]
@@ -781,19 +819,52 @@ class MaceModel(nn.Module):
                 filtered_outs = EinsOp(
                     'nodes blocks mul outs -> nodes mul outs', reduce=self.interaction_reduction
                 )(filtered_outs)
-            return mod(filtered_outs, cg.nodes.graph_i, cg.n_total_graphs, ctx)
 
-        out_irrep_arr = e3nn.IrrepsArray.from_list(
-            out.irreps,
-            [collect_chunk(chunk, mod) for chunk, mod in zip(out.chunks, self.node_reduction_mods)],
-            leading_shape=(cg.n_total_graphs,),
-        )
+            if i < len(self.node_reduction_mods):
+                # part of the global outputs
+                return self.node_reduction_mods[i](
+                    filtered_outs, cg.nodes.graph_i, cg.n_total_graphs, ctx
+                )
+            else:
+                # global output
+                return filtered_outs
 
-        out_ir = out_irrep_arr.irreps
-        if out_ir.is_scalar() and out_ir.num_irreps == 1:
-            return out_irrep_arr.array
+        chunks = [collect_chunk(chunk, i) for i, chunk in enumerate(out.chunks)]
+
+        out_ir = out.irreps
+
+        if self.output_graph_irreps is None:
+            graph_arr = None
         else:
-            return out_irrep_arr
+            graph_arr = e3nn.IrrepsArray.from_list(
+                self.output_graph_irreps,
+                chunks[: len(self.node_reduction_mods)],
+                leading_shape=(cg.n_total_graphs,),
+            )
+
+        if self.output_node_irreps is None:
+            node_arr = None
+        else:
+            node_arr = e3nn.IrrepsArray.from_list(
+                self.output_node_irreps,
+                chunks[len(self.node_reduction_mods) :],
+                leading_shape=(cg.n_total_nodes,),
+            )
+
+        if out_ir.is_scalar() and out_ir.num_irreps == 1:
+            # special case for regression
+            return graph_arr.array
+        else:
+            return graph_arr, node_arr
+
+    @property
+    def output_irreps(self) -> str:
+        if self.output_node_irreps is None:
+            return self.output_graph_irreps
+        elif self.output_graph_irreps is None:
+            return self.output_node_irreps
+        else:
+            return f'{self.output_graph_irreps} + {self.output_node_irreps}'
 
 
 if __name__ == '__main__':

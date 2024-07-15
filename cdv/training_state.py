@@ -27,7 +27,7 @@ from cdv.config import LossConfig, MainConfig
 from cdv.dataset import CrystalGraphs, dataloader
 from cdv.layers import Context
 from cdv.utils import item_if_arr
-from cdv.vae import vae_loss
+from cdv.vae import prop_loss
 
 
 @struct.dataclass
@@ -128,10 +128,7 @@ class TrainingRun:
                 optax.losses.squared_error(preds, batch.e_form).mean(where=batch.padding_mask)
             )
             metric_updates = dict(mae=mae, loss=loss, rmse=rmse, grad_norm=state.last_grad_norm)
-        elif task == 'vae':
-            loss_dict = vae_loss(config, batch, preds)
-            metric_updates = dict(grad_norm=state.last_grad_norm, **loss_dict)
-        elif task == 'diled':
+        elif task == 'diled' or task == 'vae':
             losses = {k: jnp.mean(v) for k, v in preds.items()}
             losses['grad_norm'] = state.last_grad_norm
             metric_updates = dict(**losses)
@@ -158,8 +155,6 @@ class TrainingRun:
                 preds = state.apply_fn(params, batch, ctx=Context(training=True), rngs=rngs)
                 loss = config.regression_loss(preds.squeeze(), batch.e_form, batch.padding_mask)
                 return loss, preds
-            elif task == 'vae':
-                return vae_loss(config, batch, preds)['loss'], preds
             else:
                 return preds['loss'].mean(), preds
 
