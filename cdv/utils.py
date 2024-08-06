@@ -1,27 +1,30 @@
 """Utilities."""
 
-from math import isfinite
-from os import PathLike
-from pathlib import Path
-import re
+from inspect import signature
 import io
+import re
 from abc import ABCMeta
 from dataclasses import asdict, is_dataclass
 from functools import partial
+from math import isfinite
+from os import PathLike
+from pathlib import Path
 from types import MappingProxyType
+from typing import Any, Callable
 
+from e3nn_jax import IrrepsArray
 import flax.linen as nn
 import humanize
 import jax
 import jax.numpy as jnp
 import numpy as np
 import rich
+from flax.serialization import msgpack_restore, msgpack_serialize
 from jaxtyping import jaxtyped
 from pymatgen.core import Element
 from rich.style import Style
 from rich.text import Text
 from rich.tree import Tree
-from flax.serialization import msgpack_restore, msgpack_serialize
 
 # checker = typechecker(conf=BeartypeConf(is_color=False))
 tcheck = partial(jaxtyped, typechecker=None)
@@ -249,6 +252,8 @@ def tree_traverse(visitor: TreeVisitor, obj, max_depth=2, collapse_single=True):
         return visitor.jax_arr(obj)
     elif isinstance(obj, np.ndarray):
         return visitor.np_arr(obj)
+    elif isinstance(obj, IrrepsArray):
+        return f'Irreps({obj.irreps})[{visitor.jax_arr(obj.array)}]'
     elif isinstance(obj, (list, tuple)):
         if max_depth == 0:
             return '[...]'
@@ -383,4 +388,34 @@ def flax_summary(
     out = re.sub(r'\d' * 6 + '+', human_units, out)
 
     print(out)
+    return out
+
+
+def callable_name(any_callable: Callable[..., Any]) -> str:
+    if isinstance(any_callable, partial):
+        return any_callable.func.__qualname__
+
+    try:
+        return any_callable.__qualname__
+    except AttributeError:
+        return str(any_callable)
+
+
+def intercept_stat(next_fun, args, kwargs, context):
+    sig = signature(next_fun)
+    bound = sig.bind(*args, **kwargs)
+    has_printed = False
+    for name, val in bound.arguments.items():
+        if hasattr(val, 'shape'):
+            if not has_printed:
+                print()
+                print(context.module.name)
+                print(callable_name(next_fun))
+                has_printed = True
+            debug_stat(**{name: val})
+
+    out = next_fun(*args, **kwargs)
+    if hasattr(out, 'shape'):
+        debug_stat(**{callable_name(next_fun) + ' out': out})
+
     return out

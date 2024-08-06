@@ -1,14 +1,16 @@
 import subprocess
+from inspect import signature
 
 import jax
 import jax.numpy as jnp
 import pyrallis
 from jax.lib import xla_client
+from flax import linen as nn
 
 from cdv.config import MainConfig
 from cdv.dataset import dataloader, load_file
 from cdv.layers import Context
-from cdv.utils import debug_stat, debug_structure, flax_summary
+from cdv.utils import debug_stat, debug_structure, flax_summary, intercept_stat
 from cdv.vae import prop_loss
 
 
@@ -53,7 +55,10 @@ def show_model(config: MainConfig, make_hlo_dot=False, do_profile=False):
 
     debug_stat(out=out)
     kwargs['cg'], rots = kwargs['cg'].rotate(123)
-    rot_out = mod.apply(params, kwargs['cg'], rngs=rngs, ctx=Context(training=True))
+
+    with nn.intercept_methods(intercept_stat):
+        rot_out = mod.apply(params, kwargs['cg'], rngs=rngs, ctx=Context(training=True))
+
     if config.task == 'e_form':
         debug_stat(equiv_error=jnp.abs(rot_out - out))
     elif config.task == 'vae':

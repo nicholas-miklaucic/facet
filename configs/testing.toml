@@ -1,7 +1,7 @@
 batch_size = 63
 do_profile = false
-num_epochs = 3
-regressor = "dimenet"
+num_epochs = 20
+regressor = "mace"
 task = "e_form"
 
 [data]
@@ -9,8 +9,8 @@ dataset_name = "jarvis_dft3d_cleaned"
 raw_data_folder = "data"
 data_folder = "precomputed"
 shuffle_seed = 1618
-train_split = 5
-test_split = 20
+train_split = 10
+test_split = 15
 valid_split = 1
 batch_n_nodes = 512
 batch_n_edges = 9872
@@ -28,131 +28,28 @@ gpu_ids = [1]
 [log]
 log_dir = "logs"
 logs_per_epoch = 8
+epochs_per_ckpt = 1
 
 [train]
 lr_schedule_kind = "cosine"
 start_lr_frac = 0.1
-base_lr = 0.004
+base_lr = 4e-3
 end_lr_frac = 0.04
-weight_decay = 0.03
+weight_decay = 0.05
 beta_1 = 0.9
 beta_2 = 0.999
 nestorov = true
 max_grad_norm = 1.0
+schedule_free = false
+prodigy = false
 
-[cogn]
-node_dim = 128
-edge_dim = 128
-num_blocks = 5
-node_update_reduction = "mean"
-node_agg_reduction = "mean"
-
-[dimenet]
-num_radial = 8
-num_spherical = 7
-envelope_exp = 6
-cutoff = 7
-species_emb = 64
-edge2node = "mean"
-node2graph = "mean"
-
-[cogn.dist_enc]
-lo = 0
-hi = 8
-sd = 1
-emb = 32
-
-[cogn.msg_layer]
-inner_dims = []
-activation = "swish"
-final_activation = "Identity"
-dropout = 0.0
-residual = false
-num_heads = 1
-
-[cogn.node_layer]
-inner_dims = []
-activation = "swish"
-final_activation = "Identity"
-dropout = 0.0
-residual = false
-num_heads = 1
-
-[cogn.readout_head]
-inner_dims = []
-activation = "swish"
-final_activation = "Identity"
-out_dim = 1
-dropout = 0.0
-residual = false
-num_heads = 1
-
-[dimenet.act]
-name = "sigmoid"
-
-[dimenet.initial_embed]
-inner_dims = []
-activation = "swish"
-final_activation = "Identity"
-dropout = 0.0
-residual = false
-num_heads = 1
-
-[dimenet.int_dist_enc]
-inner_dims = []
-activation = "swish"
-final_activation = "Identity"
-dropout = 0.0
-residual = false
-num_heads = 1
-
-[dimenet.int_ang_enc]
-inner_dims = []
-activation = "swish"
-final_activation = "Identity"
-dropout = 0.0
-residual = false
-num_heads = 1
-
-[dimenet.int_down_proj]
-inner_dims = []
-activation = "swish"
-final_activation = "Identity"
-dropout = 0.0
-residual = false
-num_heads = 1
-
-[dimenet.int_up_proj]
-inner_dims = []
-activation = "swish"
-final_activation = "Identity"
-dropout = 0.0
-residual = false
-num_heads = 1
-
-[dimenet.int_pre_skip]
-inner_dims = []
-activation = "swish"
-final_activation = "Identity"
-dropout = 0.0
-residual = false
-num_heads = 1
-
-[dimenet.int_post_skip]
-inner_dims = []
-activation = "swish"
-final_activation = "Identity"
-dropout = 0.0
-residual = false
-num_heads = 1
-
-[dimenet.head]
-inner_dims = []
-activation = "swish"
-final_activation = "Identity"
-dropout = 0.0
-residual = false
-num_heads = 1
+[mace]
+max_ell = 2
+# num_interactions = 5
+num_interactions = 2
+hidden_irreps = "64x0e"
+correlation = 2
+readout_mlp_irreps = "64x0e"
 
 [train.loss.reg_loss]
 loss_delta = 0.015625

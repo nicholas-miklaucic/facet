@@ -23,7 +23,8 @@ from cdv.utils import debug_stat, debug_structure, flax_summary, ELEM_VALS
 
 
 def Linear(*args, **kwargs):
-    return nn.WeightNorm(e3nn.flax.Linear(*args, **kwargs))
+    # return nn.WeightNorm(e3nn.flax.Linear(*args, **kwargs))
+    return e3nn.flax.Linear(*args, **kwargs)
 
 
 class LinearNodeEmbedding(nn.Module):
@@ -184,7 +185,7 @@ class SymmetricContraction(nn.Module):
             species_ind = species_embed(index)
         else:
             species_embed_mlp = LazyInMLP(
-                [], out_dim=num_rbf, name='species_radial_mlp', normalization='weight'
+                [], out_dim=num_rbf, name='species_radial_mlp', normalization='layer'
             )
             species_embed = species_embed_mlp(species_embed, ctx=ctx)
             species_ind = species_embed[index]
@@ -383,7 +384,7 @@ class MessagePassingConvolution(nn.Module):
             .tolist(),
             out_dim=messages.irreps.num_irreps,
             inner_act=self.activation,
-            normalization='weight',
+            normalization='none',
         )(radial_embedding, ctx)  # [n_edges, num_irreps]
 
         # debug_structure(messages=messages.array, mix=mix.array, rad=radial_embedding.array)
@@ -392,8 +393,8 @@ class MessagePassingConvolution(nn.Module):
 
         zeros = E3IrrepsArray.zeros(messages.irreps, node_feats.shape[:1], messages.dtype)
         node_feats = zeros.at[receivers].add(messages)  # [n_nodes, irreps]
-
-        return node_feats / jnp.sqrt(self.avg_num_neighbors)
+        # node_feats = node_feats / jnp.sqrt(self.avg_num_neighbors)
+        return node_feats
 
 
 class InteractionBlock(nn.Module):
