@@ -627,7 +627,7 @@ class MainConfig:
                 latent_dim=128,
                 latent_space=LatticeVAE(),
             ),
-            PropertyPredictor(LazyInMLP([128, 64, 32], dropout_rate=0.3)),
+            PropertyPredictor(LazyInMLP([256], dropout_rate=0.3)),
             Decoder(self.mace.build(self.data.num_species, '0e', None)),
             prop_reg_loss=self.train.loss.regression_loss,
         )

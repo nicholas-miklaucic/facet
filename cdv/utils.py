@@ -59,7 +59,7 @@ from rich.theme import Theme
 def format_scalar(scalar: int | float, chars=6) -> str:
     """Formats the scalar using no more than the given number of characters, if possible."""
     if scalar < 0:
-        return '-' + format_scalar(scalar, chars=chars - 1)
+        return '-' + format_scalar(abs(scalar), chars=chars - 1)
     if isinstance(scalar, int):
         if len(str(scalar)) - chars > 3:
             # egregiously longer, use scientific notation

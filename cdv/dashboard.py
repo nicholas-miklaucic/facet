@@ -78,6 +78,9 @@ class Losses(PlotextPlot):
                 if name == 'epoch':
                     continue
                 yvals = self._data[name]
+                if min(yvals) < 0 or max(yvals) > 20:
+                    continue
+
                 max_data = max(
                     max_data, max([y for x, y in zip(xx, yvals) if x >= cutoff], default=1)
                 )

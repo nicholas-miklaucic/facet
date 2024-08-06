@@ -145,14 +145,11 @@ class TrainingRun:
     def train_step(task: str, config: LossConfig, state: TrainState, batch: CrystalGraphs, rng):
         """Train for a single step."""
         rngs = {k: v for k, v in rng.items()} if isinstance(rng, dict) else {'params': rng}
-        rngs['dropout'] = jax.random.fold_in(key=rng['params'], data=state.step)
-        if task == 'diled':
-            rngs['dropout'], rngs['noise'], rngs['time'] = jax.random.split(rngs['dropout'], 3)
+        rng = jax.random.fold_in(rngs['params'], state.step)
 
         def loss_fn(params):
-            preds = state.apply_fn(params, batch, ctx=Context(training=True), rngs=rngs)
+            preds = state.apply_fn(params, batch, ctx=Context(training=True), rngs=rng)
             if task == 'e_form':
-                preds = state.apply_fn(params, batch, ctx=Context(training=True), rngs=rngs)
                 loss = config.regression_loss(preds.squeeze(), batch.e_form, batch.padding_mask)
                 return loss, preds
             else:

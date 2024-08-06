@@ -15,10 +15,11 @@ import jax.numpy as jnp
 import jax.random as jr
 
 from cdv.mace import MaceModel
-from cdv.utils import debug_structure
+from cdv.utils import debug_structure, debug_stat
 
 
 class LatentOutput(struct.PyTreeNode):
+    z_e: Float[Array, ' batch latent']
     output: Float[Array, 'batch latent']
     loss: Float[Array, ' batch']
     losses: Mapping[str, Float[Array, ' batch']]
@@ -27,44 +28,47 @@ class LatentOutput(struct.PyTreeNode):
 class LatentSpace(nn.Module):
     """Latent space: abstracts different priors and quantizations."""
 
-    def __call__(self, z_e: Float[Array, 'batch latent'], ctx: Context) -> LatentOutput:
+    def __call__(self, z_e: Float[Array, 'batch latent'], mask, ctx: Context) -> LatentOutput:
         raise NotImplementedError
 
 
 class LatticeVAE(LatentSpace):
     """Lattice VAE (https://arxiv.org/pdf/2310.09382)."""
 
-    desired_codebook_size: float = 512
+    desired_codebook_size: float = 128
     commitment_cost: float = 0.25
-    # default is 1?
-    sparsity_penalty: float = 0.01
+    sparsity_penalty: float = 1
 
     @nn.compact
-    def __call__(self, z_e: Float[Array, 'batch latent'], ctx: Context) -> LatentOutput:
+    def __call__(self, z_e: Float[Array, 'batch latent'], mask, ctx: Context) -> LatentOutput:
         def lattice_init(key, shape, dtype):
-            scale = 1 / (self.desired_codebook_size ** (1 / shape[-1]) - 1)
-            return jax.random.uniform(key, shape, dtype, -scale, scale)
+            # scale = 1 / (self.desired_codebook_size ** (1 / shape[-1]) - 1)
+            # return jax.random.uniform(key, shape, dtype, -scale, scale)
+            return jax.random.normal(key, shape, dtype)
 
         B = self.param('lattice', lattice_init, (z_e.shape[-1],), z_e.dtype)
-
-        # round each dimension to the nearest multiple of the corresponding scale in B
-        quantized = jnp.rint(z_e / B) * B
+        B = jax.nn.sigmoid(B) * 0.3 + 0.05
 
         sg = jax.lax.stop_gradient
 
+        # round each dimension to the nearest multiple of the corresponding scale in B
+        # straight-through estimator: otherwise output has no gradient
+        quantized = z_e + sg(jnp.rint(z_e / B) * B - z_e)
+
         sparsity_loss = jnp.mean(jnp.abs(B))
-        commitment_loss = R.mean(R.sum((z_e - sg(quantized)) ** 2, axis=-1))
-        embedding_loss = R.mean(R.sum((sg(z_e) - quantized) ** 2, axis=-1))
+        commitment_loss = jnp.mean(R.mean((z_e - sg(quantized)) ** 2, axis=-1), where=mask)
+        embedding_loss = jnp.mean(R.mean((sg(z_e) - quantized) ** 2, axis=-1), where=mask)
 
         losses = {
             'sparsity': -self.sparsity_penalty * sparsity_loss,
-            'commitment': self.commitment_cost * commitment_loss,
+            'β': self.commitment_cost * commitment_loss,
             'embed': embedding_loss,
+            'K': jnp.mean(jnp.ptp(jnp.rint(z_e / B), axis=1), where=mask),
         }
 
-        total_loss = losses['sparsity'] + losses['commitment'] + losses['embed']
+        total_loss = losses['sparsity'] + losses['β'] + losses['embed']
 
-        return LatentOutput(quantized, total_loss, losses)
+        return LatentOutput(z_e, quantized, total_loss, losses)
 
 
 class PropertyOutput(struct.PyTreeNode):
@@ -122,13 +126,16 @@ class Encoder(nn.Module):
             output_graph_irreps=f'{self.latent_dim}x0e', output_node_irreps=None
         )
 
+        self.norm = nn.LayerNorm(use_scale=False)
+
     def __call__(self, cg: CrystalGraphs, ctx: Context) -> LatentOutput:
         graph_out, node_out = self.encoder(cg, ctx)
         # in future, maybe this could have other irreps, but for now just scalars
         assert node_out is None
         assert graph_out.irreps.is_scalar()
         z_e = graph_out.array
-        latent_out = self.latent_space(z_e, ctx=ctx)
+        z_e = jnp.tanh(z_e)
+        latent_out = self.latent_space(z_e, mask=cg.padding_mask, ctx=ctx)
         return latent_out
 
 
@@ -151,7 +158,7 @@ class VAE(nn.Module):
     decoder: Decoder
     prop_reg_loss: Callable
 
-    coord_noise_scale: float = 0.01
+    coord_noise_scale: float = 0.2
 
     def setup(self):
         pass
@@ -189,15 +196,18 @@ class VAE(nn.Module):
         # )
 
         losses = z.losses
-        losses['sparsity'] = abs(losses['sparsity'])
+
+        # losses['z_s'] = jnp.mean(jnp.std(z.output, axis=1), where=cg.padding_mask)
+
+        # losses['sparsity'] = losses['sparsity']
         losses['rec'] = rec_err
-        losses['enc'] = abs(z.loss)
+        losses['enc'] = 0.2 * z.loss
 
         prop_pred = self.prop_head(z.output, ctx)
         prop_losses = prop_loss(self.prop_reg_loss, cg, prop_pred)
 
-        losses['prop'] = prop_losses.pop('loss')
+        losses['prop'] = 1 * prop_losses.pop('loss')
         losses.update(**prop_losses)
 
-        losses['loss'] = z.loss + losses['rec'] + losses['prop']
+        losses['loss'] = losses['enc'] + losses['rec'] + losses['prop']
         return losses

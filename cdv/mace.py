@@ -19,7 +19,7 @@ import numpy as np
 from cdv.databatch import CrystalGraphs
 from cdv.gnn import SegmentReduction, SegmentReductionKind
 from cdv.layers import Context, E3NormNorm, Identity, LazyInMLP, E3Irreps, E3IrrepsArray, edge_vecs
-from cdv.utils import debug_stat, debug_structure, flax_summary
+from cdv.utils import debug_stat, debug_structure, flax_summary, ELEM_VALS
 
 
 def Linear(*args, **kwargs):
@@ -31,9 +31,36 @@ class LinearNodeEmbedding(nn.Module):
     irreps_out: E3Irreps
 
     def setup(self):
+        def skipatom_init(key, shape, dtype):
+            import pickle
+            import pandas as pd
+
+            with open('data/mp_2020_10_09.dim250.keras.model', 'rb') as fin:
+                data = pickle.load(fin)
+
+            atoms = list(
+                pd.read_csv(
+                    'https://raw.githubusercontent.com/lantunes/skipatom/main/data/atoms.txt',
+                    header=None,
+                ).values.reshape(-1)
+            )
+
+            embed_i = list(map(atoms.index, ELEM_VALS))
+            embeds = jnp.array(data[embed_i], dtype=dtype)
+            curr_dim = embeds.shape[-1]
+            *batch, out_dim = shape
+
+            pad_shape = (*batch, out_dim - curr_dim)
+
+            return jnp.concat((embeds, jax.random.normal(key, pad_shape, dtype) * 0.01), axis=-1)
+
         self.irreps_out_calc = E3Irreps(self.irreps_out).filter('0e').regroup()
         self.out_dim = E3Irreps(self.irreps_out_calc).dim
-        self.embed = nn.Embed(self.num_species, self.out_dim)
+        self.embed = nn.Embed(
+            self.num_species,
+            self.out_dim,
+            # embedding_init=skipatom_init
+        )
 
     def __call__(self, node_species: Int[Array, ' batch']) -> E3IrrepsArray:
         return E3IrrepsArray(self.irreps_out_calc, self.embed(node_species))
@@ -772,7 +799,7 @@ class MaceModel(nn.Module):
             max_ell=self.max_ell,
             epsilon=None,
             correlation=self.correlation,
-            gate=nn.silu,
+            gate=nn.tanh,
             soft_normalization=self.soft_normalization,
             symmetric_tensor_product_basis=self.symmetric_tensor_product_basis,
             off_diagonal=self.off_diagonal,
