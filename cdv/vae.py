@@ -171,7 +171,10 @@ class VAE(nn.Module):
         """
         key = self.make_rng('noise')
 
-        noise = jr.normal(key, cg.nodes.cart.shape, cg.nodes.cart.dtype) * self.coord_noise_scale
+        noise = (
+            jnp.array(jr.normal(key, cg.nodes.cart.shape, cg.nodes.cart.dtype))
+            * self.coord_noise_scale
+        )
 
         new_carts = cg.nodes.cart + noise
 
@@ -179,8 +182,10 @@ class VAE(nn.Module):
         return noise, cg
 
     def __call__(self, cg: CrystalGraphs, ctx: Context):
+        # debug_structure(cg=cg)
         z = self.encoder(cg, ctx)
         eps, noisy_cg = self.add_coord_noise(cg, ctx)
+        # debug_stat(z=z, eps=eps, noisy_cg=noisy_cg)
         eps_rec = self.decoder(noisy_cg, z, ctx)
 
         rec_err = EinsOp('nodes 3 -> nodes', reduce='l2_norm')(

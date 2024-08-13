@@ -26,27 +26,29 @@ filterwarnings('ignore', category=BeartypeDecorHintPep585DeprecationWarning)
 
 def load_raw(config: 'MainConfig', file_num=0):
     """Loads a file. Lacks the complex data loader logic, but easier to use for testing.
-    If pad, pads the batch to the expected size."""    
+    If pad, pads the batch to the expected size."""
     data_folder = config.data.dataset_folder
     fn = data_folder / 'batches' / f'batch{file_num}.mpk'
 
     with open(fn, 'rb') as file:
         return msgpack_restore(file.read())
 
+
 def process_raw(raw_data, pad=None) -> CrystalGraphs:
     data: CrystalGraphs = from_state_dict(CrystalGraphs.new_empty(1, 1, 1), raw_data)
     data = jax.tree.map(jnp.array, data)
 
     # debug_structure(data)
-    if pad is not None:        
+    if pad is not None:
         # debug_structure(d=data, dp=data.padded(*pad))
         data = data.padded(*pad)
 
     return data
 
+
 def load_file(config: 'MainConfig', file_num=0, pad=True) -> CrystalGraphs:
     """Loads a file. Lacks the complex data loader logic, but easier to use for testing.
-    If pad, pads the batch to the expected size."""    
+    If pad, pads the batch to the expected size."""
     if pad:
         pad = config.data.graph_shape
     else:
@@ -68,7 +70,7 @@ def dataloader_base(
     split_inds[splits[0] : splits[1]] = 1
     split_inds[splits[1] :] = 2
 
-    split_i = ['train', 'valid', 'test'].index(split)    
+    split_i = ['train', 'valid', 'test'].index(split)
 
     split_idx = np.arange(len(files))
     split_idx = split_idx[split_inds[split_idx % total] == split_i]
@@ -90,7 +92,6 @@ def dataloader_base(
         len(split_idx) // config.train_batch_multiple,
     )
 
-        
     file_data = list(map(functools.partial(load_raw, config), split_idx))
     byte_data = dict(zip(split_idx, file_data))
 
@@ -136,10 +137,11 @@ def num_elements_class(batch):
 if __name__ == '__main__':
     from cdv.config import MainConfig
     import numpy as np
+
     config = pyrallis.parse(config_class=MainConfig)
     config.cli.set_up_logging()
 
-    f1 = load_file(config, 300)    
+    f1 = load_file(config, 300)
     debug_stat(conf=f1)
 
     from tqdm import tqdm
@@ -162,4 +164,3 @@ if __name__ == '__main__':
     print(jnp.mean(jnp.array(dens)))
     print(jnp.array(e_forms).mean())
     print(np.unique(n_nodes, return_counts=True))
-

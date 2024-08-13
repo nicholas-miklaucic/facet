@@ -26,7 +26,7 @@ from cdv.checkpointing import best_ckpt
 from cdv.config import LossConfig, MainConfig
 from cdv.dataset import CrystalGraphs, dataloader
 from cdv.layers import Context
-from cdv.utils import item_if_arr
+from cdv.utils import debug_structure, item_if_arr
 from cdv.vae import prop_loss
 
 

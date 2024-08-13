@@ -30,8 +30,6 @@ CRYSTAL_SYSTEMS = [
 # first space group of a given crystal system
 CRYSTAL_SYSTEM_THRESHOLDS = jnp.array([3, 16, 75, 143, 168, 195])[None, :]
 
-e3nn.reduced_tensor_product_basis(['1o', '1o']).array.transpose(2, 0, 1).round(2)
-
 
 class NodeData(struct.PyTreeNode):
     species: Int[Array, 'nodes']

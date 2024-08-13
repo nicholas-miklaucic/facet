@@ -29,12 +29,12 @@ gpu_ids = [0]
 log_dir = "logs"
 logs_per_epoch = 8
 epochs_per_ckpt = 2
-exp_name = 'mace_vae'
+exp_name = 'mace_vae_rec'
 
 [train]
 lr_schedule_kind = "cosine"
 start_lr_frac = 0.01
-base_lr = 3e-3
+base_lr = 1e-3
 end_lr_frac = 0.04
 weight_decay = 0.01
 beta_1 = 0.9
@@ -45,12 +45,12 @@ schedule_free = false
 prodigy = false
 
 [mace]
-max_ell = 2
+max_ell = 3
 # num_interactions = 5
 num_interactions = 2
-hidden_irreps = "512x0e + 512x1o"
-correlation = 2
-readout_mlp_irreps = "512x0e + 512x1o"
+hidden_irreps = "128x0e + 128x1o"
+correlation = 3
+readout_mlp_irreps = "128x0e + 128x1o"
 node_reduction = "mean"
 interaction_reduction = "mean"
 

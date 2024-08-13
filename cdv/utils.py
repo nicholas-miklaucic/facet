@@ -192,7 +192,7 @@ class StatsVisitor(TreeVisitor):
         return format_scalar(x, 4)
 
     def np_arr(self, arr: np.ndarray):
-        return self.jax_arr(jnp.array(arr))
+        return '(np)' + self.jax_arr(jnp.array(arr))
 
 
 class StructureVisitor(TreeVisitor):

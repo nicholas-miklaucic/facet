@@ -22,9 +22,11 @@ def to_dot_graph(x):
 @pyrallis.argparsing.wrap()
 def show_model(config: MainConfig, make_hlo_dot=False, do_profile=False):
     kwargs = dict(ctx=Context(training=True))
-    num_batches, dl = dataloader(config, split='train')
+    num_batches, dl = dataloader(config, split='train', infinite=True)
     for i, b in zip(range(3), dl):
         batch = b
+
+    # debug_structure(batch=batch)
 
     if config.task == 'e_form':
         mod = config.build_regressor()
@@ -56,8 +58,11 @@ def show_model(config: MainConfig, make_hlo_dot=False, do_profile=False):
     debug_stat(out=out)
     kwargs['cg'], rots = kwargs['cg'].rotate(123)
 
-    with nn.intercept_methods(intercept_stat):
+    if False:
         rot_out = mod.apply(params, kwargs['cg'], rngs=rngs, ctx=Context(training=True))
+    else:
+        with nn.intercept_methods(intercept_stat):
+            rot_out = mod.apply(params, kwargs['cg'], rngs=rngs, ctx=Context(training=True))
 
     if config.task == 'e_form':
         debug_stat(equiv_error=jnp.abs(rot_out - out))

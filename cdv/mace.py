@@ -128,7 +128,7 @@ class RadialEmbeddingBlock(nn.Module):
         embedding = factor * jnp.where(
             (edge_lengths == 0.0)[:, None], 0.0, func(edge_lengths)
         )  # [n_edges, num_basis]
-        return E3IrrepsArray(f'{embedding.shape[-1]}x0e', embedding)
+        return E3IrrepsArray(f'{embedding.shape[-1]}x0e', jnp.array(embedding))
 
 
 A025582 = [0, 1, 3, 7, 12, 20, 30, 44, 65, 80, 96, 122, 147, 181, 203, 251, 289]
@@ -334,6 +334,7 @@ class MessagePassingConvolution(nn.Module):
     target_irreps: E3Irreps
     max_ell: int
     activation: Callable
+    mix: str = 'mix'
 
     @nn.compact
     def __call__(
@@ -378,22 +379,67 @@ class MessagePassingConvolution(nn.Module):
         #     dropout_rate=0.2,
         # )(radial_embedding, ctx)  # [n_edges, num_irreps]
 
-        mix = LazyInMLP(
-            np.rint(np.linspace(radial_embedding.shape[-1], messages.irreps.num_irreps, 3)[1:-1])
-            .astype(int)
-            .tolist(),
-            out_dim=messages.irreps.num_irreps,
-            inner_act=self.activation,
-            normalization='none',
-        )(radial_embedding, ctx)  # [n_edges, num_irreps]
+        if self.mix == 'mix':
+            radial = LazyInMLP(
+                # np.rint(np.linspace(radial_embedding.shape[-1], messages.irreps.num_irreps, 3)[1:-1])
+                # .astype(int)
+                # .tolist(),
+                [],
+                out_dim=messages.irreps.num_irreps,
+                inner_act=self.activation,
+                normalization='none',
+                name='radial_mix',
+            )(radial_embedding, ctx)  # [n_edges, num_irreps]
 
-        # debug_structure(messages=messages.array, mix=mix.array, rad=radial_embedding.array)
-        # debug_stat(messages=messages.array, mix=mix.array, rad=radial_embedding.array)
-        messages = messages * mix  # [n_edges, irreps]
+            # debug_structure(messages=messages, mix=radial, rad=radial_embedding.array)
+            # debug_stat(messages=messages.array, mix=mix.array, rad=radial_embedding.array)
+            radial = nn.LayerNorm()(radial.array)
+            messages = messages * radial  # [n_edges, irreps]
 
-        zeros = E3IrrepsArray.zeros(messages.irreps, node_feats.shape[:1], messages.dtype)
-        node_feats = zeros.at[receivers].add(messages)  # [n_nodes, irreps]
-        # node_feats = node_feats / jnp.sqrt(self.avg_num_neighbors)
+            # debug_structure(messages=messages)
+
+            zeros = E3IrrepsArray.zeros(messages.irreps, node_feats.shape[:1], messages.dtype)
+            node_feats = zeros.at[receivers].add(messages)  # [n_nodes, irreps]
+            node_feats = node_feats / jnp.sqrt(self.avg_num_neighbors)
+        elif self.mix == 'mlpa':
+            radial = LazyInMLP(
+                # np.rint(np.linspace(radial_embedding.shape[-1], messages.irreps.num_irreps, 3)[1:-1])
+                # .astype(int)
+                # .tolist(),
+                [32],
+                out_dim=64,
+                inner_act=self.activation,
+                normalization='none',
+                name='radial_msg',
+            )(radial_embedding.array, ctx)  # [n_edges, 64]
+
+            x = jnp.concat(
+                [messages.filter('0e').array, radial], axis=-1
+            )  # [n_edges, num_scalars + 64]
+
+            z = LazyInMLP(
+                # np.rint(np.linspace(x.shape[-1], messages.irreps.num_irreps, 3)[1:-1])
+                # .astype(int)
+                # .tolist(),
+                [],
+                out_dim=messages.irreps.num_irreps,
+                inner_act=self.activation,
+                normalization='none',
+                name='msg_attention',
+            )(x, ctx)
+
+            a = jnp.exp(z)  # [n_edges, num_irreps]
+
+            normalization = jnp.zeros((node_feats.shape[0], a.shape[-1]), jnp.float32)
+            normalization = normalization.at[receivers].add(a)  # [n_nodes, num_irreps]
+
+            att = a / (normalization[receivers] + 1e-6)
+
+            # debug_stat(att=att, a=a, norm=normalization)
+
+            zeros = E3IrrepsArray.zeros(messages.irreps, node_feats.shape[:1], messages.dtype)
+            node_feats = zeros.at[receivers].add(messages * att)  # [n_nodes, irreps]
+
         return node_feats
 
 
@@ -716,6 +762,7 @@ class MACE(nn.Module):
             vectors = E3IrrepsArray('1o', vectors)
 
         radial_embedding = self.radial_embedding(safe_norm(vectors.array, axis=-1))
+        # debug_structure(radial_embedding=radial_embedding)
 
         # Interactions
         outputs = []
@@ -754,7 +801,7 @@ class MaceModel(nn.Module):
     # Node reduction.
     node_reduction: SegmentReductionKind = 'mean'
 
-    num_radial_embeds: int = 8
+    num_radial_embeds: int = 10
     max_r: float = 7.0
     avg_r_min: float = 1.0
     radial_envelope_scale: float = 2
