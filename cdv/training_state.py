@@ -57,8 +57,10 @@ class TrainState(train_state.TrainState):
 
 
 def create_train_state(module: nn.Module, optimizer, rng, batch: CrystalGraphs):
-    b1 = jax.tree_map(lambda x: x[0], batch)
+    b1 = jax.device_put(jax.tree_map(lambda x: x[0], batch), jax.devices()[0])
+    jax.debug.visualize_array_sharding(b1.e_form)
     loss, params = module.init_with_output(rng, b1, ctx=Context(training=False))
+    jax.debug.visualize_array_sharding(loss)
     tx = optimizer
     return TrainState.create(
         apply_fn=module.apply,
