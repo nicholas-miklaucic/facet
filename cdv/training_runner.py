@@ -44,6 +44,8 @@ def run_using_progress(config: MainConfig):
 
                 progress.update(task, description=' '.join(status))
 
+        progress.update(task, completed=True)
+
     print('Saved to:')
     print(run.finish().absolute())
     return run

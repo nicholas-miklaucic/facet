@@ -23,46 +23,46 @@ def to_dot_graph(x):
 def show_model(config: MainConfig, make_hlo_dot=False, do_profile=False):
     kwargs = dict(ctx=Context(training=True))
     num_batches, dl = dataloader(config, split='train', infinite=True)
-    for i, b in zip(range(3), dl):
+    for i, b in zip(range(2), dl):
         batch = b
 
-    # debug_structure(batch=batch)
+    debug_structure(batch=batch)
 
     if config.task == 'e_form':
         mod = config.build_regressor()
-        enc_batch = {'cg': batch}
         rngs = {}
     elif config.task == 'vae':
         mod = config.build_vae()
-        enc_batch = {'cg': batch}
         rngs = {'noise': jax.random.key(123)}
     elif config.task == 'diled':
         mod = config.build_diled()
-        enc_batch = {
-            'cg': batch,
-        }
         rngs = {'noise': jax.random.key(123), 'time': jax.random.key(234)}
 
     rngs['params'] = jax.random.key(0)
     rngs['dropout'] = jax.random.key(1)
-    for k, v in rngs.items():
-        rngs[k] = jax.device_put(v, list(batch.e_form.devices())[0])
-    kwargs.update(enc_batch)
-    out, params = mod.init_with_output(rngs, **kwargs)
+    b1 = jax.tree_map(lambda x: x[0], batch)
+    # for k, v in rngs.items():
+    #     rngs[k] = jax.device_put(v, )
+
+    params = mod.init(rngs, b1, **kwargs)
+    params = jax.device_put_replicated(params, config.device.devices())
+    out = jax.pmap(lambda p, b: mod.apply(p, b, rngs=rngs, **kwargs))(params, batch)
+
+    # kwargs['cg'] = b1
     # print(params['params']['edge_proj']['kernel'].devices())
-    # debug_structure(module=mod, out=out)
-    # debug_stat(input=batch)
+    debug_structure(module=mod, out=out)
+    debug_stat(input=batch)
     rngs.pop('params')
-    flax_summary(mod, rngs=rngs, **kwargs)
+    flax_summary(mod, rngs=rngs, cg=b1, **kwargs)
 
     debug_stat(out=out)
-    kwargs['cg'], rots = kwargs['cg'].rotate(123)
+    rot_batch = jax.pmap(lambda x: x.rotate(123)[0])(batch)
 
-    if False:
-        rot_out = mod.apply(params, kwargs['cg'], rngs=rngs, ctx=Context(training=True))
+    if True:
+        rot_out = jax.pmap(lambda p, b: mod.apply(p, b, rngs=rngs, **kwargs))(params, rot_batch)
     else:
         with nn.intercept_methods(intercept_stat):
-            rot_out = mod.apply(params, kwargs['cg'], rngs=rngs, ctx=Context(training=True))
+            rot_out = jax.pmap(lambda p, b: mod.apply(p, b, rngs=rngs, **kwargs))(params, rot_batch)
 
     if config.task == 'e_form':
         debug_stat(equiv_error=jnp.abs(rot_out - out))
@@ -70,11 +70,13 @@ def show_model(config: MainConfig, make_hlo_dot=False, do_profile=False):
         debug_stat(equiv_error=jax.tree.map(lambda x, y: jnp.abs(x - y), rot_out, out))
 
     def loss(params):
-        preds = mod.apply(params, batch, rngs=rngs, ctx=Context(training=True))
+        preds = jax.pmap(lambda p, b: mod.apply(p, b, rngs=rngs, ctx=Context(training=True)))(
+            params, batch
+        )
         if config.task == 'e_form':
             return {
-                'loss': config.train.loss.regression_loss(
-                    preds, batch.graph_data.e_form.reshape(-1, 1), batch.padding_mask
+                'loss': jax.pmap(config.train.loss.regression_loss)(
+                    preds, batch.graph_data.e_form[..., None], batch.padding_mask
                 )
             }
         else:

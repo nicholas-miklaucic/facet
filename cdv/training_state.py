@@ -52,9 +52,13 @@ class TrainState(train_state.TrainState):
     metrics: Metrics
     last_grad_norm: float
 
+    def replicate_params(self, devices: set[jax.Device]):
+        return jax.device_put_replicated(self.params, devices)
+
 
 def create_train_state(module: nn.Module, optimizer, rng, batch: CrystalGraphs):
-    loss, params = module.init_with_output(rng, batch, ctx=Context(training=False))
+    b1 = jax.tree_map(lambda x: x[0], batch)
+    loss, params = module.init_with_output(rng, b1, ctx=Context(training=False))
     tx = optimizer
     return TrainState.create(
         apply_fn=module.apply,
@@ -104,7 +108,7 @@ class TrainingRun:
             best_fn=lambda metrics: metrics['te_loss'],
             best_mode='min',
             max_to_keep=4,
-            enable_async_checkpointing=False,
+            enable_async_checkpointing=True,
             keep_time_interval=timedelta(minutes=30),
         )
         self.mngr = ocp.CheckpointManager(
@@ -118,15 +122,21 @@ class TrainingRun:
     @ft.partial(jax.jit, static_argnames=('task', 'config'))
     @chex.assert_max_traces(5)
     def compute_metrics(
-        *, task: str, config: LossConfig, state: TrainState, batch: CrystalGraphs, preds, rng=None
+        *,
+        task: str,
+        config: LossConfig,
+        state: TrainState,
+        batch: CrystalGraphs,
+        preds,
+        rng=None,
     ):
         if task == 'e_form':
-            preds = preds.squeeze()
-            loss = config.regression_loss(preds, batch.e_form, batch.padding_mask)
-            mae = jnp.abs(preds - batch.e_form).mean(where=batch.padding_mask)
-            rmse = jnp.sqrt(
-                optax.losses.squared_error(preds, batch.e_form).mean(where=batch.padding_mask)
-            )
+            preds = preds
+            e_form = batch.e_form[..., None]
+            mask = batch.padding_mask[..., None]
+            loss = config.regression_loss(preds, e_form, mask)
+            mae = jnp.abs(preds - e_form).mean(where=mask)
+            rmse = jnp.sqrt(optax.losses.squared_error(preds, e_form).mean(where=mask))
             metric_updates = dict(mae=mae, loss=loss, rmse=rmse, grad_norm=state.last_grad_norm)
         elif task == 'diled' or task == 'vae':
             losses = {k: jnp.mean(v) for k, v in preds.items()}
@@ -140,25 +150,46 @@ class TrainingRun:
         return state
 
     @staticmethod
-    @ft.partial(jax.jit, static_argnames=('task', 'config'))
-    @chex.assert_max_traces(5)
-    def train_step(task: str, config: LossConfig, state: TrainState, batch: CrystalGraphs, rng):
+    def train_grads(
+        task: str, config: LossConfig, state: TrainState, params, batch: CrystalGraphs, rng
+    ):
         """Train for a single step."""
         rngs = {k: v for k, v in rng.items()} if isinstance(rng, dict) else {'params': rng}
         rng = jax.random.fold_in(rngs['params'], state.step)
 
-        def loss_fn(params):
+        def loss_fn(params, batch):
             preds = state.apply_fn(params, batch, ctx=Context(training=True), rngs=rng)
             if task == 'e_form':
                 loss = config.regression_loss(preds.squeeze(), batch.e_form, batch.padding_mask)
                 return loss, preds
             else:
-                return preds['loss'].mean(), preds
+                return preds['loss'].mean(axis=-1), preds
 
-        grad_fn = jax.grad(loss_fn, has_aux=True)
-        grads, preds = grad_fn(state.params)
+        grad_fn = jax.pmap(jax.grad(loss_fn, has_aux=True), 'batch', in_axes=(None, 0))
+        from jax.experimental import mesh_utils
+        from jax.sharding import Mesh, PartitionSpec as P, NamedSharding
+
+        mesh = Mesh(mesh_utils.create_device_mesh((3,), devices=jax.devices()), 'batch')
+        sharding = NamedSharding(mesh, P('batch'))
+        replicated_sharding = NamedSharding(mesh, P())
+        return jax.lax.with_sharding_constraint(grad_fn(params, batch), sharding)
+
+    @staticmethod
+    @ft.partial(jax.jit)
+    @chex.assert_max_traces(5)
+    def update_train_state(state: TrainState, grads) -> TrainState:
+        grads = jax.tree_map(lambda x: x.mean(axis=0), grads)
         grad_norm = optax.global_norm(grads)
         state = state.apply_gradients(grads=grads, last_grad_norm=grad_norm)
+        return state
+
+    @staticmethod
+    def train_step(task: str, config: LossConfig, state: TrainState, batch: CrystalGraphs, rng):
+        """Train for a single step."""
+        grads, preds = TrainingRun.train_grads(task, config, state, state.params, batch, rng)
+        # debug_structure(grads=grads, preds=preds)
+        # jax.debug.visualize_array_sharding(preds[..., 0])
+        state = TrainingRun.update_train_state(state, grads)
         return state, preds
 
     def make_model(self):
@@ -189,7 +220,10 @@ class TrainingRun:
         if step == 0:
             # initialize model
             self.state = create_train_state(
-                module=self.model, optimizer=self.optimizer, rng=self.rng, batch=batch
+                module=self.model,
+                optimizer=self.optimizer,
+                rng=self.rng,
+                batch=batch,
             )
 
             if self.config.restart_from is not None:
@@ -244,15 +278,19 @@ class TrainingRun:
                 size = (curr - prev) * self.config.batch_size
                 self.metrics_history['throughput'].append(size / min_delta)
 
+        # debug_structure(self.state)
         # print(self.metrics_history)
 
         if self.should_ckpt:
             # Compute metrics on the test set after each training epoch
             self.test_state = self.eval_state.replace(metrics=Metrics())
             for _i, test_batch in zip(range(self.steps_in_test_epoch), self.test_dl):
-                test_preds = self.test_state.apply_fn(
-                    self.test_state.params, test_batch, ctx=Context(training=False), rngs=self.rng
-                )
+                test_preds = jax.pmap(
+                    lambda p, b: self.test_state.apply_fn(
+                        p, b, ctx=Context(training=False), rngs=self.rng
+                    ),
+                    in_axes=(None, 0),
+                )(self.test_state.params, test_batch)
 
                 self.test_state = self.compute_metrics(
                     task=self.config.task,
@@ -268,12 +306,13 @@ class TrainingRun:
                 self.metrics_history[f'te_{metric}'].append(value)
                 if f'{metric}' == 'loss':
                     self.test_loss = value
+
+            # print(self.test_loss)
             self.mngr.save(
                 self.curr_step,
                 args=ocp.args.StandardSave(self.ckpt()),
                 metrics={'te_loss': self.test_loss},
             )
-            self.mngr.wait_until_finished()
 
         return self
 

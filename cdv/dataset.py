@@ -1,8 +1,10 @@
 """Code to load the processed data."""
 
+from collections.abc import Sequence
 import functools
 
 from functools import partial
+from itertools import batched
 from os import PathLike
 from pathlib import Path
 from typing import Literal
@@ -56,6 +58,10 @@ def load_file(config: 'MainConfig', file_num=0, pad=True) -> CrystalGraphs:
     return process_raw(load_raw(config, file_num), pad)
 
 
+def stack_trees(cgs: Sequence[CrystalGraphs]) -> CrystalGraphs:
+    return jax.tree_map(lambda *args: jnp.stack(args), *cgs)
+
+
 def dataloader_base(
     config: 'MainConfig', split: Literal['train', 'test', 'valid'] = 'train', infinite: bool = False
 ):
@@ -81,39 +87,39 @@ def dataloader_base(
 
     shuffle_rng = np.random.default_rng(config.data.shuffle_seed)
 
-    device = config.device.jax_device
-
-    if isinstance(device, jax.sharding.PositionalSharding):
-        # rearrange to fit shape of databatch
-        device = device.reshape(-1, 1, 1, 1, 1)
+    device = config.device.jax_device()
+    if isinstance(device, jax.sharding.Sharding):
+        num_devices = len(device.addressable_devices)
+    else:
+        num_devices = config.stack_size
 
     batch_inds = np.split(
         shuffle_rng.permutation(split_idx),
         len(split_idx) // config.train_batch_multiple,
     )
 
+    assert len(batch_inds) % num_devices == 0, f'{len(batch_inds)} % {num_devices} != 0'
+
     file_data = list(map(functools.partial(load_raw, config), split_idx))
     byte_data = dict(zip(split_idx, file_data))
 
-    # first batch doesn't augment: that's the base on which future augmentations happen. It may make
-    # sense in the future to have limited, imperfect augmentations, and we don't want those to be
-    # stacked on top of themselves.
-    for batch in batch_inds:
-        data_files = [process_raw(byte_data[i], pad=config.data.graph_shape) for i in batch]
-        split_files[batch] = data_files
-        batch_data = split_files[batch]
-        collated = collate(batch_data)
-        yield jax.device_put(collated, device)
+    for batches in batched(batch_inds, num_devices):
+        for batch in batches:
+            data_files = [process_raw(byte_data[i], pad=config.data.graph_shape) for i in batch]
+            split_files[batch] = data_files
+        collated = [collate(split_files[batch]) for batch in batches]
+        stacked = stack_trees(collated)
+        yield jax.device_put(stacked, device)
 
     while infinite:
         batch_inds = np.split(
             shuffle_rng.permutation(split_idx),
             len(split_idx) // config.train_batch_multiple,
         )
-        for batch in batch_inds:
-            batch_data = split_files[batch]
-            collated = collate(batch_data)
-            yield jax.device_put(collated, device)
+        for batches in batched(batch_inds, num_devices):
+            collated = [collate(split_files[batch]) for batch in batches]
+            stacked = stack_trees(collated)
+            yield jax.device_put(stacked, device)
 
 
 def dataloader(

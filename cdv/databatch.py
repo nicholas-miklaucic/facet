@@ -218,6 +218,11 @@ class CrystalGraphs(struct.PyTreeNode):
         new_batch = self.replace(nodes=new_nodes, graph_data=new_graph_data)
         return new_batch, rots
 
+    def __rich_repr__(self):
+        yield 'nodes', self.nodes.cart.shape
+        yield 'edges', self.edges.sender.shape
+        yield 'graphs', self.globals.e_form.shape
+
 
 def collate(graphs: Sequence[CrystalGraphs]) -> CrystalGraphs:
     """Collates the batches into a new Graphs object."""

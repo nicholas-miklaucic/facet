@@ -48,9 +48,9 @@ prodigy = false
 max_ell = 3
 # num_interactions = 5
 num_interactions = 2
-hidden_irreps = "128x0e + 128x1o"
+hidden_irreps = "256x0e + 256x1o"
 correlation = 3
-readout_mlp_irreps = "128x0e + 128x1o"
+readout_mlp_irreps = "256x0e + 256x1o"
 node_reduction = "mean"
 interaction_reduction = "mean"
 

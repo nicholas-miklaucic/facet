@@ -1,6 +1,6 @@
 batch_size = 63
 do_profile = false
-num_epochs = 20
+num_epochs = 5
 regressor = "mace"
 task = "e_form"
 
@@ -9,9 +9,9 @@ dataset_name = "jarvis_dft3d_cleaned"
 raw_data_folder = "data"
 data_folder = "precomputed"
 shuffle_seed = 1618
-train_split = 10
-test_split = 15
-valid_split = 1
+train_split = 3
+test_split = 80
+valid_split = 3
 batch_n_nodes = 512
 batch_n_edges = 9872
 batch_n_graphs = 64
@@ -22,18 +22,18 @@ show_progress = true
 
 [device]
 device = "gpu"
-max_gpus = 1
-gpu_ids = [1]
+max_gpus = 3
+gpu_ids = [0, 1, 2]
 
 [log]
 log_dir = "logs"
 logs_per_epoch = 8
-epochs_per_ckpt = 1
+epochs_per_ckpt = 10
 
 [train]
 lr_schedule_kind = "cosine"
 start_lr_frac = 0.1
-base_lr = 4e-3
+base_lr = 1e-3
 end_lr_frac = 0.04
 weight_decay = 0.05
 beta_1 = 0.9
@@ -46,7 +46,7 @@ prodigy = false
 [mace]
 max_ell = 2
 # num_interactions = 5
-num_interactions = 2
+num_interactions = 1
 hidden_irreps = "64x0e"
 correlation = 2
 readout_mlp_irreps = "64x0e"

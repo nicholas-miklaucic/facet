@@ -170,8 +170,7 @@ class DeviceConfig:
     # IDs of GPUs to use.
     gpu_ids: list[int] = field(default_factory=list)
 
-    @property
-    def jax_device(self):
+    def devices(self):
         devs = jax.devices(self.device)
         if self.device == 'gpu' and self.max_gpus != 0:
             idx = list(range(len(devs)))
@@ -180,8 +179,22 @@ class DeviceConfig:
             ]
             devs = [devs[i] for i in order[: self.max_gpus]]
 
+        return devs
+
+    def jax_device(self):
+        devs = self.devices()
+
         if len(devs) > 1:
-            return jax.sharding.PositionalSharding(devs)
+            from jax.experimental import mesh_utils
+            from jax.sharding import Mesh, PartitionSpec as P, NamedSharding
+
+            jax.config.update('jax_threefry_partitionable', True)
+
+            d = len(devs)
+            mesh = Mesh(mesh_utils.create_device_mesh((d,), devices=jax.devices()[:d]), 'batch')
+            sharding = NamedSharding(mesh, P('batch'))
+            # replicated_sharding = NamedSharding(mesh, P())
+            return sharding
         else:
             return devs[0]
 
@@ -192,7 +205,8 @@ class DeviceConfig:
 
         import jax
 
-        jax.config.update('jax_default_device', self.jax_device)
+        # if self.max_gpus == 1:
+        #     jax.config.update('jax_default_device', self.jax_device())
 
 
 @dataclass
@@ -561,6 +575,10 @@ class MainConfig:
     # The batch size. Should be a multiple of data_batch_size to make data loading simple.
     batch_size: int = 63 * 1
 
+    # Number of stacked batches to process at once, if not given by the number of devices. Useful
+    # for mocking multi-GPU training batches with a single GPU.
+    stack_size: int = 1
+
     # Use profiling.
     do_profile: bool = False
 
@@ -624,10 +642,10 @@ class MainConfig:
         return VAE(
             Encoder(
                 self.mace.build(self.data.num_species, '0e', None),
-                latent_dim=128,
+                latent_dim=256,
                 latent_space=LatticeVAE(),
             ),
-            PropertyPredictor(LazyInMLP([256], dropout_rate=0.3)),
+            PropertyPredictor(LazyInMLP([256], dropout_rate=0.5)),
             Decoder(self.mace.build(self.data.num_species, '0e', None)),
             prop_reg_loss=self.train.loss.regression_loss,
         )

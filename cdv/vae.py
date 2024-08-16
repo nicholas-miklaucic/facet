@@ -47,7 +47,7 @@ class LatticeVAE(LatentSpace):
             return jax.random.normal(key, shape, dtype)
 
         B = self.param('lattice', lattice_init, (z_e.shape[-1],), z_e.dtype)
-        B = jax.nn.sigmoid(B) * 0.3 + 0.05
+        B = jax.nn.sigmoid(B) * 0.47 + 0.05
 
         sg = jax.lax.stop_gradient
 
@@ -211,7 +211,7 @@ class VAE(nn.Module):
         prop_pred = self.prop_head(z.output, ctx)
         prop_losses = prop_loss(self.prop_reg_loss, cg, prop_pred)
 
-        losses['prop'] = 1 * prop_losses.pop('loss')
+        losses['prop'] = 0.1 * prop_losses.pop('loss')
         losses.update(**prop_losses)
 
         losses['loss'] = losses['enc'] + losses['rec'] + losses['prop']
