@@ -3,7 +3,7 @@ from pyrallis import cfgparsing
 
 from cdv.training_runner import run_using_progress
 
-with open('configs/testing.toml', 'r') as cfg:    
+with open('configs/profiling.toml', 'r') as cfg:    
     conf = cfgparsing.load(MainConfig, cfg)
 
 run_using_progress(conf)

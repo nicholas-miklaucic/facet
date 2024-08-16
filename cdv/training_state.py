@@ -153,6 +153,8 @@ class TrainingRun:
         return state
 
     @staticmethod
+    @ft.partial(jax.jit, static_argnames=('task', 'config'))
+    @chex.assert_max_traces(5)
     def train_grads(
         task: str, config: LossConfig, state: TrainState, params, batch: CrystalGraphs, rng
     ):
@@ -161,6 +163,7 @@ class TrainingRun:
         rng = jax.random.fold_in(rngs['params'], state.step)
 
         from jax.experimental import mesh_utils
+        from jax.experimental.shard_map import shard_map
         from jax.sharding import Mesh, PartitionSpec as P, NamedSharding
 
         mesh = Mesh(mesh_utils.create_device_mesh((3,), devices=jax.devices()), 'batch')
@@ -175,20 +178,28 @@ class TrainingRun:
             else:
                 return preds['loss'].mean(axis=-1), preds
 
-        def pgrad_fn(params, batch):
+        @ft.partial(jax.vmap, in_axes=(None, 0))
+        def vgrad_fn(params, batch):
             grad_loss_fn = jax.grad(loss_fn, has_aux=True)
             grads, preds = grad_loss_fn(params, batch)
-            # grads = jax.lax.with_sharding_constraint(grads, sharding)
-            # preds = jax.lax.with_sharding_constraint(preds, sharding)
-            # debug_structure(grads=grads)
             return grads, preds
 
-        @jax.jit
-        def agg_grad(grads):
+        def agg_grads(grads):
             return jax.tree_map(lambda x: jnp.mean(x, axis=0), grads)
 
-        grads, preds = jax.pmap(pgrad_fn, axis_name='b', in_axes=(None, 0))(params, batch)
-        grads = agg_grad(grads)
+        @ft.partial(
+            shard_map,
+            mesh=mesh,
+            in_specs=(P(None), P('batch')),
+            out_specs=(P(), P('batch')),
+        )
+        def pgrad_fn(params, batch):
+            grads, preds = vgrad_fn(params, batch)
+            grads = agg_grads(grads)
+            grads = jax.lax.pmean(grads, axis_name='batch')
+            return grads, preds
+
+        grads, preds = pgrad_fn(params, batch)
         return grads, preds
 
     @staticmethod
