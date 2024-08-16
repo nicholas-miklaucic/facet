@@ -57,10 +57,11 @@ class TrainState(train_state.TrainState):
 
 
 def create_train_state(module: nn.Module, optimizer, rng, batch: CrystalGraphs):
-    b1 = jax.device_put(jax.tree_map(lambda x: x[0], batch), jax.devices()[0])
-    jax.debug.visualize_array_sharding(b1.e_form)
+    b1 = jax.tree_map(lambda x: x[0], batch)
+    # debug_structure(b1=b1)
+    # jax.debug.visualize_array_sharding(b1.e_form)
     loss, params = module.init_with_output(rng, b1, ctx=Context(training=False))
-    jax.debug.visualize_array_sharding(loss)
+    # jax.debug.visualize_array_sharding(loss)
     tx = optimizer
     return TrainState.create(
         apply_fn=module.apply,
@@ -159,6 +160,13 @@ class TrainingRun:
         rngs = {k: v for k, v in rng.items()} if isinstance(rng, dict) else {'params': rng}
         rng = jax.random.fold_in(rngs['params'], state.step)
 
+        from jax.experimental import mesh_utils
+        from jax.sharding import Mesh, PartitionSpec as P, NamedSharding
+
+        mesh = Mesh(mesh_utils.create_device_mesh((3,), devices=jax.devices()), 'batch')
+        sharding = NamedSharding(mesh, P('batch'))
+        replicated_sharding = NamedSharding(mesh, P())
+
         def loss_fn(params, batch):
             preds = state.apply_fn(params, batch, ctx=Context(training=True), rngs=rng)
             if task == 'e_form':
@@ -167,20 +175,27 @@ class TrainingRun:
             else:
                 return preds['loss'].mean(axis=-1), preds
 
-        grad_fn = jax.pmap(jax.grad(loss_fn, has_aux=True), 'batch', in_axes=(None, 0))
-        from jax.experimental import mesh_utils
-        from jax.sharding import Mesh, PartitionSpec as P, NamedSharding
+        def pgrad_fn(params, batch):
+            grad_loss_fn = jax.grad(loss_fn, has_aux=True)
+            grads, preds = grad_loss_fn(params, batch)
+            # grads = jax.lax.with_sharding_constraint(grads, sharding)
+            # preds = jax.lax.with_sharding_constraint(preds, sharding)
+            # debug_structure(grads=grads)
+            return grads, preds
 
-        mesh = Mesh(mesh_utils.create_device_mesh((3,), devices=jax.devices()), 'batch')
-        sharding = NamedSharding(mesh, P('batch'))
-        replicated_sharding = NamedSharding(mesh, P())
-        return jax.lax.with_sharding_constraint(grad_fn(params, batch), sharding)
+        @jax.jit
+        def agg_grad(grads):
+            return jax.tree_map(lambda x: jnp.mean(x, axis=0), grads)
+
+        grads, preds = jax.pmap(pgrad_fn, axis_name='b', in_axes=(None, 0))(params, batch)
+        grads = agg_grad(grads)
+        return grads, preds
 
     @staticmethod
     @ft.partial(jax.jit)
     @chex.assert_max_traces(5)
     def update_train_state(state: TrainState, grads) -> TrainState:
-        grads = jax.tree_map(lambda x: x.mean(axis=0), grads)
+        # grads = jax.tree_map(lambda x: x.mean(axis=0), grads)
         grad_norm = optax.global_norm(grads)
         state = state.apply_gradients(grads=grads, last_grad_norm=grad_norm)
         return state
@@ -188,8 +203,13 @@ class TrainingRun:
     @staticmethod
     def train_step(task: str, config: LossConfig, state: TrainState, batch: CrystalGraphs, rng):
         """Train for a single step."""
+        # debug_structure(state.params)
+        # debug_structure(batch)
         grads, preds = TrainingRun.train_grads(task, config, state, state.params, batch, rng)
         # debug_structure(grads=grads, preds=preds)
+        # print('params')
+        # jax.debug.visualize_array_sharding(jax.tree_leaves(state.params)[0].reshape(-1))
+        # print('preds')
         # jax.debug.visualize_array_sharding(preds[..., 0])
         state = TrainingRun.update_train_state(state, grads)
         return state, preds
@@ -243,6 +263,7 @@ class TrainingRun:
         )
 
         self.state, preds = self.train_step(state=self.state, **kwargs)
+        # jax.debug.visualize_array_sharding(preds[..., 0])
         self.state = self.compute_metrics(preds=preds, state=self.eval_state, **kwargs)
 
         if self.should_log or self.should_ckpt:  # one training epoch has passed

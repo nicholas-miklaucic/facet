@@ -1,3 +1,6 @@
+# profile data
+*.nsys-rep
+
 # Data files
 precomputed/*
 models/*

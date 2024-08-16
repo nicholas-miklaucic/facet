@@ -58,6 +58,7 @@ def load_file(config: 'MainConfig', file_num=0, pad=True) -> CrystalGraphs:
     return process_raw(load_raw(config, file_num), pad)
 
 
+@jax.jit
 def stack_trees(cgs: Sequence[CrystalGraphs]) -> CrystalGraphs:
     return jax.tree_map(lambda *args: jnp.stack(args), *cgs)
 
@@ -144,7 +145,7 @@ if __name__ == '__main__':
     from cdv.config import MainConfig
     import numpy as np
 
-    config = pyrallis.parse(config_class=MainConfig)
+    config = pyrallis.parse(config_class=MainConfig, config_path='configs/testing.toml')
     config.cli.set_up_logging()
 
     f1 = load_file(config, 300)
@@ -163,7 +164,8 @@ if __name__ == '__main__':
         e_forms.append(batch.graph_data.e_form.mean())
         n_nodes.extend(batch.n_node.tolist())
 
-    print(batch.graph_data.density.devices())
+    jax.debug.visualize_array_sharding(batch.e_form)
+    jax.debug.visualize_array_sharding(batch.e_form[0])
 
     debug_structure(conf=next(dl))
 
