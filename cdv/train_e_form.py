@@ -14,7 +14,7 @@ def train_e_form(config: MainConfig):
 
         jax.profiler.start_trace('/tmp/tensorboard', create_perfetto_trace=True)
 
-    if True:
+    if False:
         run_using_progress(config)
     else:
         run_using_dashboard(config)

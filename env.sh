@@ -20,3 +20,4 @@ export XLA_FLAGS="
 --xla_gpu_enable_async_all_reduce=true
 "
 export JAX_TRACEBACK_IN_LOCATIONS_LIMIT=20
+export XLA_PYTHON_CLIENT_MEM_FRACTION=0.9

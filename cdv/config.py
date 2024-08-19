@@ -56,6 +56,9 @@ class LogConfig:
     # Checkpoint every n epochs:
     epochs_per_ckpt: int = 2
 
+    # Test every n epochs:
+    epochs_per_valid: int = 2
+
 
 @dataclass
 class DataConfig:

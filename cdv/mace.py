@@ -179,15 +179,22 @@ class SymmetricContraction(nn.Module):
 
         num_rbf = 32
 
+        use_half = True
+        dtype = jnp.bfloat16 if use_half else jnp.float32
+
         if species_embed is None:
-            species_embed = nn.Embed(self.num_species, num_rbf, name='species_embed')
+            species_embed = nn.Embed(
+                self.num_species, num_rbf, name='species_embed', param_dtype=dtype
+            )
             # species_ind = index
             species_ind = species_embed(index)
         else:
             species_embed_mlp = LazyInMLP(
                 [], out_dim=num_rbf, name='species_radial_mlp', normalization='layer'
             )
-            species_embed = species_embed_mlp(species_embed, ctx=ctx)
+            species_embed = species_embed_mlp(
+                species_embed.astype(jnp.bfloat16) if use_half else species_embed, ctx=ctx
+            )
             species_ind = species_embed[index]
 
         # print(input.shape, index.shape)
@@ -214,7 +221,9 @@ class SymmetricContraction(nn.Module):
                 W[name] = self.param(
                     name,
                     # nn.initializers.normal(stddev=(mul**-0.5) ** (1.0 - gradient_normalization)),
-                    nn.initializers.normal(stddev=1),
+                    nn.initializers.normal(
+                        stddev=1, dtype=jnp.bfloat16 if use_half else jnp.float32
+                    ),
                     (num_rbf, mul, input.shape[-2]),
                 )
 
@@ -250,12 +259,20 @@ class SymmetricContraction(nn.Module):
             #  \-----------/
             #       out
 
+            einsum_kwargs = {
+                'precision': jax.lax.Precision.DEFAULT,
+                'preferred_element_type': jnp.bfloat16 if use_half else jnp.float32,
+            }
+            if use_half:
+                x_ = x_.astype(jnp.bfloat16)
+
             for (mul, ir_out), u in zip(U.irreps, U.list):
                 u = u.astype(x_.dtype)
                 # u: ndarray [(irreps_x.dim)^order, multiplicity, ir_out.dim]
                 # print(self)
                 name = f'w{order}_{ir_out}'
-                w = jnp.einsum('be,e...->b...', species_ind, W[name])
+                w = jnp.einsum('be,e...->b...', species_ind, W[name], **einsum_kwargs)
+
                 # w = W[name][species]
 
                 # [multiplicity, num_features]
@@ -266,11 +283,11 @@ class SymmetricContraction(nn.Module):
                     # debug_structure(u=u, w=w, x=x_)
                     out[ir_out] = (
                         'special',
-                        jnp.einsum('...jki,bkc,bcj->bc...i', u, w, x_),
+                        jnp.einsum('...jki,bkc,bcj->bc...i', u, w, x_, **einsum_kwargs),
                     )  # [num_features, (irreps_x.dim)^(oder-1), ir_out.dim]
                 else:
                     out[ir_out] += jnp.einsum(
-                        '...ki,bkc->bc...i', u, w
+                        '...ki,bkc->bc...i', u, w, **einsum_kwargs
                     )  # [num_features, (irreps_x.dim)^order, ir_out.dim]
 
             # ((w3 x + w2) x + w1) x
@@ -283,7 +300,7 @@ class SymmetricContraction(nn.Module):
                     continue  # already done (special case optimization above)
 
                 out[ir_out] = jnp.einsum(
-                    'bc...ji,bcj->bc...i', out[ir_out], x_
+                    'bc...ji,bcj->bc...i', out[ir_out], x_, **einsum_kwargs
                 )  # [num_features, (irreps_x.dim)^(oder-1), ir_out.dim]
 
             # ((w3 x + w2) x + w1) x
@@ -393,7 +410,7 @@ class MessagePassingConvolution(nn.Module):
 
             # debug_structure(messages=messages, mix=radial, rad=radial_embedding.array)
             # debug_stat(messages=messages.array, mix=mix.array, rad=radial_embedding.array)
-            radial = nn.LayerNorm()(radial.array)
+            radial = nn.LayerNorm(param_dtype=radial.dtype)(radial.array)
             messages = messages * radial  # [n_edges, irreps]
 
             # debug_structure(messages=messages)
@@ -869,7 +886,7 @@ class MaceModel(nn.Module):
         ctx: Context,
         global_feats: Float[Array, 'graphs latent'] | None = None,
     ):
-        vecs = edge_vecs(cg)
+        vecs = edge_vecs(cg).astype(jnp.bfloat16)
 
         if global_feats is None:
             extra_node_feats = None

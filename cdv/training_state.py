@@ -164,11 +164,9 @@ class TrainingRun:
 
         from jax.experimental import mesh_utils
         from jax.experimental.shard_map import shard_map
-        from jax.sharding import Mesh, PartitionSpec as P, NamedSharding
+        from jax.sharding import Mesh, PartitionSpec as P
 
         mesh = Mesh(mesh_utils.create_device_mesh((3,), devices=jax.devices()), 'batch')
-        sharding = NamedSharding(mesh, P('batch'))
-        replicated_sharding = NamedSharding(mesh, P())
 
         def loss_fn(params, batch):
             preds = state.apply_fn(params, batch, ctx=Context(training=True), rngs=rng)
@@ -277,14 +275,16 @@ class TrainingRun:
         # jax.debug.visualize_array_sharding(preds[..., 0])
         self.state = self.compute_metrics(preds=preds, state=self.eval_state, **kwargs)
 
-        if self.should_log or self.should_ckpt:  # one training epoch has passed
+        if (
+            self.should_log or self.should_ckpt or self.should_validate
+        ):  # one training epoch has passed
             for metric, value in self.state.metrics.items():  # compute metrics
                 if metric == 'grad_norm':
                     self.metrics_history['grad_norm'].append(value)  # record metrics
                     continue
                 self.metrics_history[f'tr_{metric}'].append(value)  # record metrics
 
-                if not self.should_ckpt:
+                if not self.should_validate:
                     if f'te_{metric}' in self.metrics_history:
                         self.metrics_history[f'te_{metric}'].append(
                             self.metrics_history[f'te_{metric}'][-1]
@@ -315,7 +315,7 @@ class TrainingRun:
         # debug_structure(self.state)
         # print(self.metrics_history)
 
-        if self.should_ckpt:
+        if self.should_validate:
             # Compute metrics on the test set after each training epoch
             self.test_state = self.eval_state.replace(metrics=Metrics())
             for _i, test_batch in zip(range(self.steps_in_test_epoch), self.test_dl):
@@ -341,6 +341,7 @@ class TrainingRun:
                 if f'{metric}' == 'loss':
                     self.test_loss = value
 
+        if self.should_ckpt:
             # print(self.test_loss)
             self.mngr.save(
                 self.curr_step,
@@ -365,6 +366,10 @@ class TrainingRun:
     @property
     def should_ckpt(self):
         return (self.curr_step + 1) % (self.config.log.epochs_per_ckpt * self.steps_in_epoch) == 0
+
+    @property
+    def should_validate(self):
+        return (self.curr_step + 1) % (self.config.log.epochs_per_valid * self.steps_in_epoch) == 0
 
     @property
     def lr(self):

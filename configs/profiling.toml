@@ -1,6 +1,6 @@
 batch_size = 252
 do_profile = false
-num_epochs = 5
+num_epochs = 50
 regressor = "mace"
 task = "e_form"
 
@@ -34,7 +34,7 @@ exp_name = "profiling"
 [train]
 lr_schedule_kind = "cosine"
 start_lr_frac = 0.1
-base_lr = 1e-3
+base_lr = 4e-3
 end_lr_frac = 0.04
 weight_decay = 0.05
 beta_1 = 0.9
@@ -47,10 +47,10 @@ prodigy = false
 [mace]
 max_ell = 3
 # num_interactions = 5
-num_interactions = 2
-hidden_irreps = "512x0e"
+num_interactions = 5
+hidden_irreps = "256x0e + 128x1o + 64x2e"
 correlation = 3
-readout_mlp_irreps = "512x0e"
+readout_mlp_irreps = "256x0e + 128x1o + 64x2e"
 
 [train.loss.reg_loss]
 loss_delta = 0.015625

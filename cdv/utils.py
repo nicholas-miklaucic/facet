@@ -141,16 +141,17 @@ class StatsVisitor(TreeVisitor):
 
         if size <= self.sample_size:
             sampling = False
-            if flat.dtype == jnp.bfloat16:
-                x = np.array(flat.astype(jnp.float32))
-            else:
-                x = np.array(flat)
         else:
             sampling = True
 
             # n^2 + 1 tends to have fewer factors: should capture most slices
             inds = jnp.arange(np.floor(np.sqrt(size - 1)) + 1, dtype=jnp.int64) ** 2 + 1
             x = np.array(flat[inds])
+
+        if flat.dtype == jnp.bfloat16:
+            x = np.array(flat.astype(jnp.float32))
+        else:
+            x = np.array(flat)
 
         summary = ''
         if x.dtype.kind == 'f':
@@ -178,11 +179,15 @@ class StatsVisitor(TreeVisitor):
                 else:
                     summary += f'uniq: {n_uniq}'
 
-            fmt = lambda s: f'{s:n}'
+            fmt = lambda s: f'{float(s):n}'
+            # fmt = str
 
         q25, q50, q75 = np.quantile(x, [0.25, 0.5, 0.75], method='closest_observation')
 
-        quarts = f'({fmt(lo)} {fmt(q25)} {fmt(q50)} {fmt(q75)} {fmt(hi)})'
+        try:
+            quarts = f'({fmt(lo)} {fmt(q25)} {fmt(q50)} {fmt(q75)} {fmt(hi)})'
+        except ValueError:
+            print(lo, q25, q50, q75, hi)
         out = f'{quarts:>50} {summary}'
         out += '~' if sampling else ''
 

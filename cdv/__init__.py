@@ -23,10 +23,10 @@ BASE_XLA_FLAGS = """"""
 os.environ['jax_transfer_guard'] = 'disallow'
 os.environ['jax_platforms'] = 'gpu'
 os.environ['JAX_COMPILATION_CACHE_DIR'] = '/tmp/jax_cache'
-os.environ.update(
-    {
-        'NCCL_LL128_BUFFSIZE': '-2',
-        'NCCL_LL_BUFFSIZE': '-2',
-        'NCCL_PROTO': 'SIMPLE,LL,LL128',
-    }
-)
+# os.environ.update(
+#     {
+#         'NCCL_LL128_BUFFSIZE': '-2',
+#         'NCCL_LL_BUFFSIZE': '-2',
+#         'NCCL_PROTO': 'SIMPLE,LL,LL128',
+#     }
+# )
