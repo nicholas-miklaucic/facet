@@ -166,7 +166,8 @@ class TrainingRun:
         from jax.experimental.shard_map import shard_map
         from jax.sharding import Mesh, PartitionSpec as P
 
-        mesh = Mesh(mesh_utils.create_device_mesh((3,), devices=jax.devices()), 'batch')
+        devs = jax.local_devices()
+        mesh = Mesh(mesh_utils.create_device_mesh(len(devs), devices=devs), 'batch')
 
         def loss_fn(params, batch):
             preds = state.apply_fn(params, batch, ctx=Context(training=True), rngs=rng)

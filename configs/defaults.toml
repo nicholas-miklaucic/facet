@@ -1,4 +1,5 @@
 batch_size = 63
+stack_size = 1
 do_profile = false
 num_epochs = 20
 regressor = "dimenet"
@@ -29,6 +30,7 @@ gpu_ids = []
 log_dir = "logs"
 logs_per_epoch = 8
 epochs_per_ckpt = 2
+epochs_per_valid = 2
 
 [train]
 lr_schedule_kind = "cosine"

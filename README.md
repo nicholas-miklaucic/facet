@@ -1,37 +1,45 @@
 # CDV
+Working repository for diffusion and prediction models using MACE.
 
-A reimplementation of CDVAE, planning to add more.
+## Immediate To-Do
+- Get forces/stress working
+- Normalize those outputs properly, store in dataset metadata
+- Add per-layer irreps
+- W&B
+- Full diffusion, not just CDVAE
+- Training sweep for below
 
+## Ideas
+### Prediction Gradients
+MACE currently predicts forces and stress by differentiating the energy prediction function
+through the positions of the nodes. Is this a better way of doing diffusion?
 
-## Improvements
+### Lattice Prediction
+The edge images mean that gradients are computable w.r.t the lattice, especially if fractional coordinates are used. Is this better than predicting the lattice modification?
 
-### Composition Prediction
-CDVAE uses fractional atom compositions as the output of the property predictor, along with the
-number of atoms. This seems terrible to me: compositions aren't independent Bernoulli events. It
-would make a lot of sense for NaCl and KCl to have similar latents, but NaKCl2 is not in any way
-similar to the "average" of the two.
+### Constrained Diffusion
+What if Doob's h-transform is used to predict atom type by letting the atomic embeddings vary continuously?
 
-For a first go, we can try a transformer with sorted element types. Later, it may make sense to have
-some architecture that builds in permutation equivariance and doesn't need a canonical ordering of
-elements.
+### Parameter Allocation
+What distribution of irreps leads to the best performance?
+What internal representation should be used when doing the linear up and down projections?
 
-### Lattice Denoising
-One network uses a somewhat strange lattice denoising loss where each edge has a score indicating how
-much it would lengthen or contract and the lattice is adjusted to balance out those forces. That
-requires edge-specific scores, which goes against the whole idea of the MACE architecture and scales
-poorly. I've had serious issues representing the lattice as a metric tensor, and I think perhaps
-Cond-CDVAE is the better approach: simply predict the new lattice vector.
+### Tensor Products
+There are a few different ways of doing tensor products to update node representations. 
 
-It's unclear how to combine this with Cartesian coordinate diffusion. I think the best solution is
-probably to only consider first-order effects: the lattice changing will affect the distances
-between edges. If denoising is done sequentially, the coordinates will have to be projected back
-into the unit cell, but that can be done without taking gradients while edges are being recomputed.
+We can take tensor products only within a single irrep, or we can take products between all allowed irreps from the input and output. Existing literature doesn't have the off-diagonal entries often, but this echoes the next point...
 
-### Global Conditioning
-CDVAE concatenates the global latent $z$ and uses an MLP to project a new node embedding from the
-concatenation of the latent and the atom type embedding.
+It seems to me that using lower-rank linear layers could have a lot of potential. The most expensive part of the model is the node update, but it may be better to trade off fidelity there for more ability to let edges communicate.
 
-There are potentially other solutions that would make sense, and I worry that it will be very
-difficult for the decoder to properly use the latent if it's only used at the very start and
-immediately projected down. Perhaps parameterizing the message passing with a global latent would
-help.
+### Edge Updates
+Edge updates can in theory depend on 
+
+- the hidden states of the sender/reciever nodes
+- the species of the sender/receiver nodes
+- the edge distance
+
+How to best combine this information?
+
+For example, right now, edges are gated using the radial embedding, independent of the actual data. Perhaps this should change?
+
+Alternatively, could dot product attention be made stable?
