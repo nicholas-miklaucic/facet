@@ -20,6 +20,7 @@ import jax.numpy as jnp
 import numpy as np
 import rich
 from flax.serialization import msgpack_restore, msgpack_serialize
+from flax.serialization import to_bytes
 from jaxtyping import jaxtyped
 from pymatgen.core import Element
 from rich.style import Style
@@ -108,7 +109,7 @@ def load_pytree(file: PathLike):
 def save_pytree(obj, file: PathLike):
     """Saves a MsgPack serialized PyTree."""
     with open(Path(file), 'wb') as out:
-        out.write(msgpack_serialize(obj))
+        out.write(to_bytes(obj))
 
 
 class TreeVisitor:

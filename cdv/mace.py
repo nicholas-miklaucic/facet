@@ -810,6 +810,9 @@ class MaceModel(nn.Module):
     hidden_irreps: str  # 256x0e or 128x0e + 128x1o
     readout_mlp_irreps: str  # Hidden irreps of the MLP in last readout, default 16x0e
 
+    scalar_mean: float = 0.0
+    scalar_std: float = 1.0
+
     num_interactions: int = 2  # Number of interactions (layers), default 2
 
     # How to combine the outputs of different interaction blocks.
@@ -945,7 +948,7 @@ class MaceModel(nn.Module):
 
         if out_ir.is_scalar() and out_ir.num_irreps == 1:
             # special case for regression
-            return graph_arr.array
+            return graph_arr.array * self.scalar_std + self.scalar_mean
         else:
             return graph_arr, node_arr
 

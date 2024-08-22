@@ -1,4 +1,5 @@
 from functools import cached_property
+from json import JSONDecodeError
 import logging
 from enum import Enum
 from pathlib import Path
@@ -63,7 +64,7 @@ class LogConfig:
 @dataclass
 class DataConfig:
     # The name of the dataset to use.
-    dataset_name: str = 'jarvis_dft3d_cleaned'
+    dataset_name: str = 'mptrj'
 
     # Folder of raw data files.
     raw_data_folder: Path = Path('data/')
@@ -82,30 +83,39 @@ class DataConfig:
     valid_split: int = 2
 
     # Number of nodes in each batch to pad to.
-    batch_n_nodes: int = 512
-    # Number of edges in each batch to pad to.
-    batch_n_edges: int = 9872
+    batch_n_nodes: int = 1024
+    # Number of neighbors per node.
+    k: int = 16
     # Number of graphs in each batch to pad to.
-    batch_n_graphs: int = 64
+    batch_n_graphs: int = 32
 
     @property
     def graph_shape(self) -> tuple[int, int, int]:
-        return (self.batch_n_nodes, self.batch_n_edges, self.batch_n_graphs)
+        return (self.batch_n_nodes, self.k, self.batch_n_graphs)
 
     @property
-    def metadata(self) -> Mapping[str, Any]:
+    def metadata(self) -> Mapping[str, Any] | None:
         import json
 
-        with open(self.dataset_folder / 'metadata.json', 'r') as metadata:
-            metadata = json.load(metadata)
-        return metadata
+        path = self.dataset_folder / 'metadata.json'
+
+        if not path.exists():
+            return None
+
+        try:
+            with open(path, 'r') as metadata:
+                metadata = json.load(metadata)
+                return metadata
+        except JSONDecodeError:
+            return None
 
     def __post_init__(self):
-        num_splits = self.train_split + self.test_split + self.valid_split
-        num_batches = self.metadata['data_size'] // self.metadata['batch_size']
-        if num_batches % num_splits != 0:
-            msg = f'Data is split {num_splits} ways, which does not divide {num_batches}'
-            raise ValueError(msg)
+        pass
+        # num_splits = self.train_split + self.test_split + self.valid_split
+        # num_batches = self.metadata['data_size'] // self.metadata['batch_size']
+        # if num_batches % num_splits != 0:
+        #     msg = f'Data is split {num_splits} ways, which does not divide {num_batches}'
+        #     raise ValueError(msg)
 
     @property
     def dataset_folder(self) -> Path:
@@ -437,7 +447,12 @@ class MACEConfig:
     node_reduction: str = 'mean'
 
     def build(
-        self, num_species: int, output_graph_irreps: str, output_node_irreps: str | None = None
+        self,
+        num_species: int,
+        output_graph_irreps: str,
+        output_node_irreps: str | None = None,
+        scalar_mean: float = 0.0,
+        scalar_std: float = 1.0,
     ) -> MaceModel:
         return MaceModel(
             max_ell=self.max_ell,
@@ -576,7 +591,7 @@ class TrainingConfig:
 @dataclass
 class MainConfig:
     # The batch size. Should be a multiple of data_batch_size to make data loading simple.
-    batch_size: int = 63 * 1
+    batch_size: int = 32 * 1
 
     # Number of stacked batches to process at once, if not given by the number of devices. Useful
     # for mocking multi-GPU training batches with a single GPU.
@@ -608,7 +623,10 @@ class MainConfig:
     task: str = 'e_form'
 
     def __post_init__(self):
-        if self.batch_size % self.data.metadata['batch_size'] != 0:
+        if (
+            self.data.metadata is not None
+            and self.batch_size % self.data.metadata['batch_size'] != 0
+        ):
             raise ValueError(
                 'Training batch size should be multiple of data batch size: {} does not divide {}'.format(
                     self.batch_size, self.data.metadata['batch_size']
@@ -629,7 +647,10 @@ class MainConfig:
     @property
     def train_batch_multiple(self) -> int:
         """How many files should be loaded per training step."""
-        return self.batch_size // self.data.metadata['batch_size']
+        if self.data.metadata is None:
+            return 1
+        else:
+            return self.batch_size // self.data.metadata['batch_size']
 
     # def build_diffusion(self) -> DiffusionModel:
     #     diffuser = MLPMixerDiffuser(
@@ -659,7 +680,12 @@ class MainConfig:
         elif self.regressor == 'dimenet':
             return self.dimenet.build(self.data.num_species)
         elif self.regressor == 'mace':
-            return self.mace.build(self.data.num_species, '0e')
+            return self.mace.build(
+                self.data.num_species,
+                '0e',
+                scalar_mean=self.data.metadata['e_form']['mean'],
+                scalar_std=self.data.metadata['e_form']['mean'],
+            )
         else:
             raise ValueError
 

@@ -9,6 +9,7 @@ from os import PathLike
 from pathlib import Path
 from typing import Literal
 from warnings import filterwarnings
+import functools as ft
 
 from flax.serialization import from_state_dict, msgpack_restore
 import jax
@@ -26,36 +27,28 @@ from cdv.utils import debug_stat, debug_structure, load_pytree
 filterwarnings('ignore', category=BeartypeDecorHintPep585DeprecationWarning)
 
 
-def load_raw(config: 'MainConfig', file_num=0):
-    """Loads a file. Lacks the complex data loader logic, but easier to use for testing.
-    If pad, pads the batch to the expected size."""
+def load_raw(config: 'MainConfig', group_num=0, file_num=0):
+    """Loads a file. Lacks the complex data loader logic, but easier to use for testing."""
     data_folder = config.data.dataset_folder
-    fn = data_folder / 'batches' / f'batch{file_num}.mpk'
+    fn = data_folder / 'batches' / f'group_{group_num:04}' / f'{file_num:05}.mpk'
 
-    with open(fn, 'rb') as file:
-        return msgpack_restore(file.read())
+    return load_pytree(fn)
 
 
-def process_raw(raw_data, pad=None) -> CrystalGraphs:
-    data: CrystalGraphs = from_state_dict(CrystalGraphs.new_empty(1, 1, 1), raw_data)
+@ft.partial(jax.jit)
+def process_raw(raw_data) -> CrystalGraphs:
+    data: CrystalGraphs = from_state_dict(
+        CrystalGraphs.new_empty(1024, 16, 32),
+        raw_data,
+    )
     data = jax.tree.map(jnp.array, data)
-
-    # debug_structure(data)
-    if pad is not None:
-        # debug_structure(d=data, dp=data.padded(*pad))
-        data = data.padded(*pad)
 
     return data
 
 
-def load_file(config: 'MainConfig', file_num=0, pad=True) -> CrystalGraphs:
-    """Loads a file. Lacks the complex data loader logic, but easier to use for testing.
-    If pad, pads the batch to the expected size."""
-    if pad:
-        pad = config.data.graph_shape
-    else:
-        pad = None
-    return process_raw(load_raw(config, file_num), pad)
+def load_file(config: 'MainConfig', group_num=0, file_num=0) -> CrystalGraphs:
+    """Loads a file. Lacks the complex data loader logic, but easier to use for testing."""
+    return process_raw(load_raw(config, group_num, file_num))
 
 
 @jax.jit
@@ -68,7 +61,7 @@ def dataloader_base(
 ):
     """Returns a generator that produces batches to train on. If infinite, repeats forever: otherwise, stops when all data has been yielded."""
     data_folder = config.data.dataset_folder
-    files = sorted(list(data_folder.glob('batches/batch*')))
+    groups = sorted((data_folder / 'batches').glob('group_*'))
 
     splits = np.cumsum([config.data.train_split, config.data.valid_split, config.data.test_split])
     total = splits[-1]
@@ -79,12 +72,10 @@ def dataloader_base(
 
     split_i = ['train', 'valid', 'test'].index(split)
 
-    split_idx = np.arange(len(files))
+    shuffle_rng = np.random.default_rng(config.data.shuffle_seed)
+
+    split_idx = shuffle_rng.permutation(len(groups))
     split_idx = split_idx[split_inds[split_idx % total] == split_i]
-
-    yield len(split_idx) // config.train_batch_multiple
-
-    split_files = np.array([None for _ in range(len(files))])
 
     shuffle_rng = np.random.default_rng(config.data.shuffle_seed)
 
@@ -94,21 +85,34 @@ def dataloader_base(
     else:
         num_devices = config.stack_size
 
+    split_groups = [groups[i] for i in split_idx]
+
+    group_files = []
+
+    for group in split_groups:
+        group_num = int(group.stem.removeprefix('group_'))
+        for file in group.glob('*.mpk'):
+            group_files.append((group_num, int(file.stem)))
+
     batch_inds = np.split(
-        shuffle_rng.permutation(split_idx),
-        len(split_idx) // config.train_batch_multiple,
+        shuffle_rng.permutation(len(group_files) - len(group_files) % config.train_batch_multiple),
+        len(group_files) // config.train_batch_multiple,
     )
 
-    assert len(batch_inds) % num_devices == 0, f'{len(batch_inds)} % {num_devices} != 0'
+    yield len(batch_inds)
 
-    file_data = list(map(functools.partial(load_raw, config), split_idx))
-    byte_data = dict(zip(split_idx, file_data))
+    split_files = {}
+
+    # assert len(batch_inds) % num_devices == 0, f'{len(batch_inds)} % {num_devices} != 0'
+
+    # file_data = list(map(functools.partial(load_raw, config), split_idx))
+    # byte_data = dict(zip(split_idx, file_data))
 
     for batches in batched(batch_inds, num_devices):
-        for batch in batches:
-            data_files = [process_raw(byte_data[i], pad=config.data.graph_shape) for i in batch]
-            split_files[batch] = data_files
-        collated = [collate(split_files[batch]) for batch in batches]
+        for device_batch in batches:
+            for i in device_batch:
+                split_files[i] = load_file(config, *group_files[i])
+        collated = [collate([split_files[i] for i in batch]) for batch in batches]
         stacked = stack_trees(collated)
         yield jax.device_put(stacked, device)
 
@@ -118,7 +122,7 @@ def dataloader_base(
             len(split_idx) // config.train_batch_multiple,
         )
         for batches in batched(batch_inds, num_devices):
-            collated = [collate(split_files[batch]) for batch in batches]
+            collated = [collate([split_files[i] for i in batch]) for batch in batches]
             stacked = stack_trees(collated)
             yield jax.device_put(stacked, device)
 
@@ -145,30 +149,23 @@ if __name__ == '__main__':
     from cdv.config import MainConfig
     import numpy as np
 
-    config = pyrallis.parse(config_class=MainConfig, config_path='configs/testing.toml')
+    config = pyrallis.parse(config_class=MainConfig)
     config.cli.set_up_logging()
-
-    f1 = load_file(config, 300)
-    debug_stat(conf=f1)
 
     from tqdm import tqdm
 
     steps_per_epoch, dl = dataloader(config, split='train', infinite=True)
+    f2 = next(dl)
+    debug_structure(conf=next(dl))
 
-    dens = []
     e_forms = []
     n_nodes = []
     for _i in tqdm(np.arange(steps_per_epoch * 2)):
         batch = next(dl)
-        dens.append(batch.graph_data.density.mean())
-        e_forms.append(batch.graph_data.e_form.mean())
+        e_forms.append(batch.target_data.e_form.mean())
         n_nodes.extend(batch.n_node.tolist())
 
-    jax.debug.visualize_array_sharding(batch.e_form)
-    jax.debug.visualize_array_sharding(batch.e_form[0])
+    jax.debug.visualize_array_sharding(batch.target_data.e_form)
 
-    debug_structure(conf=next(dl))
-
-    print(jnp.mean(jnp.array(dens)))
     print(jnp.array(e_forms).mean())
     print(np.unique(n_nodes, return_counts=True))
