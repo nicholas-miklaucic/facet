@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from functools import cached_property
 from json import JSONDecodeError
 import logging
@@ -76,11 +77,14 @@ class DataConfig:
     shuffle_seed: int = 1618
 
     # Train split.
-    train_split: int = 22
+    train_split: int = 30
     # Test split.
-    test_split: int = 2
+    test_split: int = 3
     # Valid split.
-    valid_split: int = 2
+    valid_split: int = 3
+
+    # Batches per group to take, 0 means everything. Should only be used for testing.
+    batches_per_group: int = 0
 
     # Number of nodes in each batch to pad to.
     batch_n_nodes: int = 1024
@@ -449,6 +453,7 @@ class MACEConfig:
     def build(
         self,
         num_species: int,
+        elem_indices: Sequence[int],
         output_graph_irreps: str,
         output_node_irreps: str | None = None,
         scalar_mean: float = 0.0,
@@ -456,6 +461,7 @@ class MACEConfig:
     ) -> MaceModel:
         return MaceModel(
             max_ell=self.max_ell,
+            elem_indices=jnp.array(elem_indices),
             num_interactions=self.num_interactions,
             hidden_irreps=str(e3nn_jax.Irreps(self.hidden_irreps)),
             readout_mlp_irreps=str(e3nn_jax.Irreps(self.readout_mlp_irreps)),
@@ -467,6 +473,8 @@ class MACEConfig:
             correlation=self.correlation,
             interaction_reduction=self.interaction_reduction,
             node_reduction=self.node_reduction,
+            scalar_mean=scalar_mean,
+            scalar_std=scalar_std,
         )
 
 
@@ -682,6 +690,7 @@ class MainConfig:
         elif self.regressor == 'mace':
             return self.mace.build(
                 self.data.num_species,
+                self.data.metadata['element_indices'],
                 '0e',
                 scalar_mean=self.data.metadata['e_form']['mean'],
                 scalar_std=self.data.metadata['e_form']['mean'],

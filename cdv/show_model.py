@@ -46,7 +46,9 @@ def show_model(config: MainConfig, make_hlo_dot=False, do_profile=False):
 
     params = mod.init(rngs, b1, **kwargs)
     params = jax.device_put_replicated(params, config.device.devices())
-    out = jax.pmap(lambda p, b: mod.apply(p, b, rngs=rngs, **kwargs))(params, batch)
+
+    with jax.debug_nans():
+        out = jax.vmap(lambda p, b: mod.apply(p, b, rngs=rngs, **kwargs))(params, batch)
 
     # kwargs['cg'] = b1
     # print(params['params']['edge_proj']['kernel'].devices())
@@ -76,7 +78,7 @@ def show_model(config: MainConfig, make_hlo_dot=False, do_profile=False):
         if config.task == 'e_form':
             return {
                 'loss': jax.pmap(config.train.loss.regression_loss)(
-                    preds, batch.graph_data.e_form[..., None], batch.padding_mask
+                    preds, batch.e_form[..., None], batch.padding_mask
                 )
             }
         else:

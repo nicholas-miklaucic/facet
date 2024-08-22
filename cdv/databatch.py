@@ -195,7 +195,7 @@ class CrystalGraphs(struct.PyTreeNode):
         the matrices."""
         rots = e3nn.rand_matrix(jax.random.key(seed), shape=(self.n_total_graphs,))
         lat_rot_m = jnp.einsum('bij,bjk->bik', self.globals.lat, rots)
-        new_carts = jnp.einsum('bik,bi->bk', lat_rot_m[self.nodes.graph_i], self.nodes.frac)
+        new_carts = jnp.einsum('bik,bi->bk', lat_rot_m[self.nodes.graph_i], self.frac)
         new_nodes = self.nodes.replace(cart=new_carts)
         new_graph_data = self.graph_data.replace(lat=lat_rot_m)
         new_batch = self.replace(nodes=new_nodes, graph_data=new_graph_data)

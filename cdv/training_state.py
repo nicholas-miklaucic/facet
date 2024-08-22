@@ -320,7 +320,7 @@ class TrainingRun:
             # Compute metrics on the test set after each training epoch
             self.test_state = self.eval_state.replace(metrics=Metrics())
             for _i, test_batch in zip(range(self.steps_in_test_epoch), self.test_dl):
-                test_preds = jax.pmap(
+                test_preds = jax.vmap(
                     lambda p, b: self.test_state.apply_fn(
                         p, b, ctx=Context(training=False), rngs=self.rng
                     ),

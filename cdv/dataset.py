@@ -4,7 +4,7 @@ from collections.abc import Sequence
 import functools
 
 from functools import partial
-from itertools import batched
+from itertools import batched, count, cycle
 from os import PathLike
 from pathlib import Path
 from typing import Literal
@@ -75,13 +75,15 @@ def dataloader_base(
     shuffle_rng = np.random.default_rng(config.data.shuffle_seed)
 
     split_idx = shuffle_rng.permutation(len(groups))
-    split_idx = split_idx[split_inds[split_idx % total] == split_i]
+    split_idx = split_idx[split_inds[np.arange(len(split_idx)) % total] == split_i]
+
+    # print(split_idx)
 
     shuffle_rng = np.random.default_rng(config.data.shuffle_seed)
 
     device = config.device.jax_device()
     if isinstance(device, jax.sharding.Sharding):
-        num_devices = len(device.addressable_devices)
+        num_devices = len(device.addressable_devices) * config.stack_size
     else:
         num_devices = config.stack_size
 
@@ -89,13 +91,24 @@ def dataloader_base(
 
     group_files = []
 
+    if config.data.batches_per_group == 0:
+        limit = cycle([0])
+    else:
+        limit = range(config.data.batches_per_group)
+
     for group in split_groups:
         group_num = int(group.stem.removeprefix('group_'))
-        for file in group.glob('*.mpk'):
+        for file, _i in zip(sorted(group.glob('*.mpk')), limit):
             group_files.append((group_num, int(file.stem)))
 
+    split_idx = np.arange(len(group_files))
+
+    trunc_length = len(group_files) - len(group_files) % config.train_batch_multiple
+
+    shuffle = shuffle_rng.permutation(split_idx)
+
     batch_inds = np.split(
-        shuffle_rng.permutation(len(group_files) - len(group_files) % config.train_batch_multiple),
+        shuffle[:trunc_length],
         len(group_files) // config.train_batch_multiple,
     )
 
@@ -116,9 +129,12 @@ def dataloader_base(
         stacked = stack_trees(collated)
         yield jax.device_put(stacked, device)
 
+    for i in shuffle[trunc_length:]:
+        split_files[i] = load_file(config, *group_files[i])
+
     while infinite:
         batch_inds = np.split(
-            shuffle_rng.permutation(split_idx),
+            shuffle_rng.permutation(split_idx)[:trunc_length],
             len(split_idx) // config.train_batch_multiple,
         )
         for batches in batched(batch_inds, num_devices):
@@ -133,16 +149,6 @@ def dataloader(
     dl = dataloader_base(config, split, infinite)
     steps_per_epoch = next(dl)
     return (steps_per_epoch, dl)
-
-
-def num_elements_class(batch):
-    # 2, 3, 4, 5 are values
-    # map to 0, 1, 2, 3
-    return (
-        jax.nn.one_hot(batch['species'], jnp.max(batch['species']).item(), dtype=jnp.int16)
-        .max(axis=1)
-        .sum(axis=1)
-    ) - 2
 
 
 if __name__ == '__main__':

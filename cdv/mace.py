@@ -2,6 +2,7 @@
 MACE network code. Adapted from https://github.com/ACEsuit/mace-jax.
 """
 
+from collections.abc import Sequence
 import functools
 import math
 from typing import Callable, Optional
@@ -29,6 +30,7 @@ def Linear(*args, **kwargs):
 
 class LinearNodeEmbedding(nn.Module):
     num_species: int
+    element_indices: Int[Array, 'max_species']
     irreps_out: E3Irreps
 
     def setup(self):
@@ -64,7 +66,7 @@ class LinearNodeEmbedding(nn.Module):
         )
 
     def __call__(self, node_species: Int[Array, ' batch']) -> E3IrrepsArray:
-        return E3IrrepsArray(self.irreps_out_calc, self.embed(node_species))
+        return E3IrrepsArray(self.irreps_out_calc, self.embed(self.element_indices[node_species]))
 
 
 class LinearReadoutBlock(nn.Module):
@@ -114,9 +116,9 @@ class RadialEmbeddingBlock(nn.Module):
         """batch -> batch num_basis"""
 
         def func(lengths):
-            basis = self.basis_functions(lengths, self.r_max)  # [n_edges, num_basis]
-            cutoff = self.envelope_function(lengths, self.r_max)  # [n_edges]
-            return basis * cutoff[:, None]  # [n_edges, num_basis]
+            basis = self.basis_functions(lengths, self.r_max)  # [n_nodes,k, num_basis]
+            cutoff = self.envelope_function(lengths, self.r_max)  # [n_nodes, k]
+            return basis * cutoff[..., None]  # [n_edges, num_basis]
 
         with jax.ensure_compile_time_eval():
             if self.avg_r_min is None:
@@ -126,7 +128,7 @@ class RadialEmbeddingBlock(nn.Module):
                 factor = jnp.mean(func(samples) ** 2).item() ** -0.5
 
         embedding = factor * jnp.where(
-            (edge_lengths == 0.0)[:, None], 0.0, func(edge_lengths)
+            (edge_lengths == 0.0)[..., None], 0.0, func(edge_lengths)
         )  # [n_edges, num_basis]
         return E3IrrepsArray(f'{embedding.shape[-1]}x0e', jnp.array(embedding))
 
@@ -356,31 +358,35 @@ class MessagePassingConvolution(nn.Module):
     @nn.compact
     def __call__(
         self,
-        vectors: E3IrrepsArray,  # [n_edges, 3]
+        vectors: E3IrrepsArray,  # [n_nodes, k, 3]
         node_feats: E3IrrepsArray,  # [n_nodes, irreps]
-        radial_embedding: jnp.ndarray,  # [n_edges, radial_embedding_dim]
-        senders: jnp.ndarray,  # [n_edges, ]
-        receivers: jnp.ndarray,  # [n_edges, ]
+        radial_embedding: jnp.ndarray,  # [n_nodes, k, radial_embedding_dim]
+        receivers: jnp.ndarray,  # [n_nodes, k]
         ctx: Context,
     ) -> E3IrrepsArray:
         """-> n_nodes irreps"""
         assert node_feats.ndim == 2
 
-        messages = node_feats[senders]
+        messages_broadcast = node_feats[
+            jnp.repeat(jnp.arange(node_feats.shape[0])[..., None], 16, axis=-1)
+        ]
+        # debug_structure(msgs=messages, vecs=vectors)
+
+        msg_prefix = messages_broadcast.filter(self.target_irreps)
+        vec_harms = e3nn.tensor_product(
+            messages_broadcast,
+            e3nn.spherical_harmonics(range(1, self.max_ell + 1), vectors, True),
+            filter_ir_out=self.target_irreps,
+        )
+
+        # debug_structure(
+        #     msg=messages_broadcast, vecs=vectors, msg_pref=msg_prefix, vec_harm=vec_harms
+        # )
 
         messages = e3nn.concatenate(
-            [
-                messages.filter(self.target_irreps),
-                e3nn.tensor_product(
-                    messages,
-                    e3nn.spherical_harmonics(range(1, self.max_ell + 1), vectors, True),
-                    filter_ir_out=self.target_irreps,
-                ),
-                # e3nn.tensor_product_with_spherical_harmonics(
-                #     messages, vectors, self.max_ell
-                # ).filter(self.target_irreps),
-            ]
-        ).regroup()  # [n_edges, irreps]
+            [msg_prefix, vec_harms],
+            axis=-1,
+        ).regroup()  # [n_nodes, irreps]
 
         # one = E3IrrepsArray.ones("0e", edge_attrs.shape[:-1])
         # messages = e3nn.tensor_product(
@@ -411,11 +417,12 @@ class MessagePassingConvolution(nn.Module):
             # debug_structure(messages=messages, mix=radial, rad=radial_embedding.array)
             # debug_stat(messages=messages.array, mix=mix.array, rad=radial_embedding.array)
             radial = nn.LayerNorm(param_dtype=radial.dtype)(radial.array)
-            messages = messages * radial  # [n_edges, irreps]
+            messages = messages * radial  # [n_nodes, k, irreps]
 
             # debug_structure(messages=messages)
 
             zeros = E3IrrepsArray.zeros(messages.irreps, node_feats.shape[:1], messages.dtype)
+            # TODO flip this perhaps?
             node_feats = zeros.at[receivers].add(messages)  # [n_nodes, irreps]
             node_feats = node_feats / jnp.sqrt(self.avg_num_neighbors)
         elif self.mix == 'mlpa':
@@ -469,20 +476,19 @@ class InteractionBlock(nn.Module):
         vectors: E3IrrepsArray,  # [n_edges, 3]
         node_feats: E3IrrepsArray,  # [n_nodes, irreps]
         radial_embedding: jnp.ndarray,  # [n_edges, radial_embedding_dim]
-        senders: jnp.ndarray,  # [n_edges, ]
         receivers: jnp.ndarray,  # [n_edges, ]
         ctx: Context,
     ) -> tuple[E3IrrepsArray, E3IrrepsArray]:
         """-> n_nodes irreps"""
-        assert node_feats.ndim == 2
-        assert vectors.ndim == 2
-        assert radial_embedding.ndim == 2
+        # assert node_feats.ndim == 2
+        # assert vectors.ndim == 2
+        # assert radial_embedding.ndim == 2
 
         node_feats = Linear(node_feats.irreps, name='linear_up')(node_feats)
         # debug_stat(up=node_feats.array)
         node_feats = E3NormNorm()(node_feats)
 
-        node_feats = self.conv(vectors, node_feats, radial_embedding, senders, receivers, ctx)
+        node_feats = self.conv(vectors, node_feats, radial_embedding, receivers, ctx)
         node_feats = E3NormNorm()(node_feats)
         # debug_stat(conv=node_feats.array)
 
@@ -532,7 +538,6 @@ class MACELayer(nn.Module):
         node_feats: E3IrrepsArray,  # [n_nodes, irreps]
         node_species: jnp.ndarray,  # [n_nodes] int between 0 and num_species-1
         radial_embedding: jnp.ndarray,  # [n_edges, radial_embedding_dim]
-        senders: jnp.ndarray,  # [n_edges]
         receivers: jnp.ndarray,  # [n_edges]
         ctx: Context,
         species_embed: Float[Array, 'num_species num_embed'] | None = None,
@@ -570,7 +575,6 @@ class MACELayer(nn.Module):
             node_feats=node_feats,
             radial_embedding=radial_embedding,
             receivers=receivers,
-            senders=senders,
             ctx=ctx,
         )
 
@@ -646,6 +650,7 @@ class MACE(nn.Module):
     readout_mlp_irreps: E3Irreps  # Hidden irreps of the MLP in last readout, default 16x0e
     avg_num_neighbors: float
     num_species: int
+    elem_indices: Sequence[int]
     radial_basis: Callable[[jnp.ndarray], jnp.ndarray]
     radial_envelope: Callable[[jnp.ndarray], jnp.ndarray]
     # Number of zero derivatives at small and large distances, default 4 and 2
@@ -691,7 +696,9 @@ class MACE(nn.Module):
 
         # Embeddings
         self.node_embedding = self.node_embedding_type(
-            self.num_species, self.num_features_calc * self.hidden_irreps_calc
+            self.num_species,
+            self.elem_indices,
+            self.num_features_calc * self.hidden_irreps_calc,
         )
         self.radial_embedding = RadialEmbeddingBlock(
             r_max=self.r_max,
@@ -742,10 +749,9 @@ class MACE(nn.Module):
 
     def __call__(
         self,
-        vectors: E3IrrepsArray,  # [n_edges, 3]
+        vectors: E3IrrepsArray,  # [n_nodes, k, 3]
         node_species: jnp.ndarray,  # [n_nodes] int between 0 and num_species-1
-        senders: jnp.ndarray,  # [n_edges]
-        receivers: jnp.ndarray,  # [n_edges]
+        receivers: jnp.ndarray,  # [n_nodes, k]
         ctx: Context,
         extra_node_features: jnp.ndarray | None = None,
         node_mask: Optional[jnp.ndarray] = None,  # [n_nodes] only used for profiling
@@ -754,10 +760,10 @@ class MACE(nn.Module):
         global_features: latent vector to be incorporated into initial node embeddings
         -> n_nodes num_interactions output_irreps
         """
-        assert vectors.ndim == 2 and vectors.shape[1] == 3
-        assert node_species.ndim == 1
-        assert senders.ndim == 1 and receivers.ndim == 1
-        assert vectors.shape[0] == senders.shape[0] == receivers.shape[0]
+        # assert vectors.ndim == 3 and vectors.shape[-1] == 3
+        # assert node_species.ndim == 1
+        # assert receivers.ndim == 2
+        # assert vectors.shape[0] == receivers.shape[0]
 
         if node_mask is None:
             node_mask = jnp.ones(node_species.shape[0], dtype=jnp.bool_)
@@ -789,7 +795,6 @@ class MACE(nn.Module):
                 node_feats,
                 node_species,
                 radial_embedding,
-                senders,
                 receivers,
                 node_mask=node_mask,
                 ctx=ctx,
@@ -805,6 +810,7 @@ class MaceModel(nn.Module):
     """Graph network that wraps MACE."""
 
     num_species: int
+    elem_indices: Sequence[int]
     output_graph_irreps: str  # output irreps, 1x0e for scalar
     output_node_irreps: str | None  # output by-node irreps
     hidden_irreps: str  # 256x0e or 128x0e + 128x1o
@@ -863,6 +869,7 @@ class MaceModel(nn.Module):
             readout_mlp_irreps=self.readout_mlp_irreps,
             avg_num_neighbors=self.avg_num_neighbors,
             num_species=self.num_species,
+            elem_indices=self.elem_indices,
             num_features=self.num_features,
             max_ell=self.max_ell,
             epsilon=None,
@@ -900,7 +907,6 @@ class MaceModel(nn.Module):
         out = self.mace(
             vecs,
             cg.nodes.species,
-            cg.senders,
             cg.receivers,
             ctx=ctx,
             extra_node_features=extra_node_feats,
