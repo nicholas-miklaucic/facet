@@ -2,6 +2,7 @@
 
 from collections.abc import Sequence
 import functools
+import zarr
 
 from functools import partial
 from itertools import batched, count, cycle
@@ -11,7 +12,7 @@ from typing import Literal
 from warnings import filterwarnings
 import functools as ft
 
-from flax.serialization import from_state_dict, msgpack_restore
+from flax.serialization import from_state_dict, msgpack_restore, to_state_dict
 import jax
 import jax.numpy as jnp
 import numpy as np
@@ -51,15 +52,49 @@ def load_file(config: 'MainConfig', group_num=0, file_num=0) -> CrystalGraphs:
     return process_raw(load_raw(config, group_num, file_num))
 
 
+def set_path(data, path, value):
+    if not hasattr(value, 'get_basic_selection'):
+        return
+    if isinstance(path, str):
+        path = path.split('/')
+    if len(path) == 1:
+        data[path[0]] = value.get_basic_selection()
+    else:
+        set_path(data[path[0]], path[1:], value)
+
+
+template = to_state_dict(CrystalGraphs.new_empty(1, 1, 1))
+
+
+def zarr_to_pytree(zb):
+    data = jax.tree.map(lambda _: None, template)
+    zb.visititems(lambda n, v, data=data: set_path(data, n, v))
+    return data
+
+
+def load_file_zarr(config: 'MainConfig', group_num=0, file_num=0):
+    data_folder = config.data.dataset_folder
+    fn = data_folder / 'batches' / f'group_{group_num:04}' / f'{file_num:05}.zip'
+    store = zarr.ZipStore(fn)
+    zb = zarr.open(store, mode='r', zarr_version=2)
+    tree = zarr_to_pytree(zb)
+    return process_raw(tree)
+
+
 @jax.jit
 def stack_trees(cgs: Sequence[CrystalGraphs]) -> CrystalGraphs:
     return jax.tree_map(lambda *args: jnp.stack(args), *cgs)
 
 
 def dataloader_base(
-    config: 'MainConfig', split: Literal['train', 'test', 'valid'] = 'train', infinite: bool = False
+    config: 'MainConfig',
+    split: Literal['train', 'test', 'valid'] = 'train',
+    infinite: bool = False,
+    use_zarr: bool = False,
 ):
-    """Returns a generator that produces batches to train on. If infinite, repeats forever: otherwise, stops when all data has been yielded."""
+    """Returns a generator that produces batches to train on. If infinite, repeats forever:
+    otherwise, stops when all data has been yielded."""
+    file_load_fn = load_file_zarr if use_zarr else load_file
     data_folder = config.data.dataset_folder
     groups = sorted((data_folder / 'batches').glob('group_*'))
 
@@ -124,13 +159,13 @@ def dataloader_base(
     for batches in batched(batch_inds, num_devices):
         for device_batch in batches:
             for i in device_batch:
-                split_files[i] = load_file(config, *group_files[i])
+                split_files[i] = file_load_fn(config, *group_files[i])
         collated = [collate([split_files[i] for i in batch]) for batch in batches]
         stacked = stack_trees(collated)
         yield jax.device_put(stacked, device)
 
     for i in shuffle[trunc_length:]:
-        split_files[i] = load_file(config, *group_files[i])
+        split_files[i] = file_load_fn(config, *group_files[i])
 
     while infinite:
         batch_inds = np.split(
@@ -144,9 +179,12 @@ def dataloader_base(
 
 
 def dataloader(
-    config: 'MainConfig', split: Literal['train', 'test', 'valid'] = 'train', infinite: bool = False
+    config: 'MainConfig',
+    split: Literal['train', 'test', 'valid'] = 'train',
+    infinite: bool = False,
+    use_zarr: bool = False,
 ):
-    dl = dataloader_base(config, split, infinite)
+    dl = dataloader_base(config, split, infinite, use_zarr)
     steps_per_epoch = next(dl)
     return (steps_per_epoch, dl)
 
@@ -160,7 +198,7 @@ if __name__ == '__main__':
 
     from tqdm import tqdm
 
-    steps_per_epoch, dl = dataloader(config, split='train', infinite=True)
+    steps_per_epoch, dl = dataloader(config, split='train', infinite=True, use_zarr=False)
     f2 = next(dl)
     debug_structure(conf=next(dl))
 
