@@ -1,15 +1,15 @@
 batch_size = 256
 stack_size = 1
 do_profile = false
-num_epochs = 5
+num_epochs = 20
 regressor = "mace"
 task = "e_form"
 
 [data]
 shuffle_seed = 1618
-train_split = 1
-test_split = 34
-valid_split = 1
+train_split = 30
+test_split = 3
+valid_split = 3
 batches_per_group = 0
 
 [cli]
