@@ -1,5 +1,4 @@
 import subprocess
-from inspect import signature
 
 import jax
 import jax.numpy as jnp
@@ -8,10 +7,9 @@ from jax.lib import xla_client
 from flax import linen as nn
 
 from cdv.config import MainConfig
-from cdv.dataset import dataloader, load_file
+from cdv.dataset import dataloader
 from cdv.layers import Context
 from cdv.utils import debug_stat, debug_structure, flax_summary, intercept_stat
-from cdv.vae import prop_loss
 
 
 # https://bnikolic.co.uk/blog/python/jax/2022/02/22/jax-outputgraph-rev.html

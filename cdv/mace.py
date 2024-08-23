@@ -8,19 +8,17 @@ import math
 from typing import Callable, Optional
 from typing import Set, Union
 from flax import linen as nn
-from flax import struct
 import e3nn_jax as e3nn
 import jax
 import jax.numpy as jnp
 from jaxtyping import Float, Array, Int
 
 from eins import EinsOp
-import numpy as np
 
 from cdv.databatch import CrystalGraphs
-from cdv.gnn import SegmentReduction, SegmentReductionKind
-from cdv.layers import Context, E3NormNorm, Identity, LazyInMLP, E3Irreps, E3IrrepsArray, edge_vecs
-from cdv.utils import debug_stat, debug_structure, flax_summary, ELEM_VALS
+from cdv.layers import SegmentReduction, SegmentReductionKind
+from cdv.layers import Context, E3NormNorm, LazyInMLP, E3Irreps, E3IrrepsArray, edge_vecs
+from cdv.utils import debug_stat, ELEM_VALS
 
 
 def Linear(*args, **kwargs):
@@ -135,7 +133,6 @@ class RadialEmbeddingBlock(nn.Module):
 
 A025582 = [0, 1, 3, 7, 12, 20, 30, 44, 65, 80, 96, 122, 147, 181, 203, 251, 289]
 
-import functools as ft
 
 reduced_symmetric_tensor_product_basis = e3nn.reduced_symmetric_tensor_product_basis
 reduced_tensor_product_basis = e3nn.reduced_tensor_product_basis
@@ -586,7 +583,7 @@ class MACELayer(nn.Module):
         node_feats = profile(f'{self.name}: interaction', node_feats, node_mask[:, None])
 
         # if self.first:
-        #     # Selector TensorProduct
+        #     # Selector TensorProductGraphs
         #     node_feats = Linear(
         #         self.num_features * interaction_irreps,
         #         num_indexed_weights=self.num_species,
@@ -971,7 +968,7 @@ class MaceModel(nn.Module):
 if __name__ == '__main__':
     from cdv.config import MainConfig
     import pyrallis
-    from cdv.dataset import load_file, dataloader
+    from cdv.dataset import load_file
     from eins import EinsOp
 
     config = pyrallis.parse(config_class=MainConfig)

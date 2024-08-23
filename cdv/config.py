@@ -1,10 +1,9 @@
 from collections.abc import Sequence
-from functools import cached_property
 from json import JSONDecodeError
 import logging
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable, Literal, Mapping, Optional
+from typing import Any, Callable, Mapping, Optional
 
 import e3nn_jax
 import jax
@@ -15,32 +14,10 @@ from flax import linen as nn
 from flax.struct import dataclass
 from pyrallis.fields import field
 
-from eins.elementwise import ElementwiseOp
-from eins import ElementwiseOps as E
 from cdv import layers
-from cdv.diffusion import DiffusionBackbone, DiffusionModel, DiT, KumaraswamySchedule
-from cdv.diled import Category, DiLED, EFormCategory, EncoderDecoder, SpaceGroupCategory
-from cdv.encoder import Downsample, ReduceSpeciesEmbed, SpeciesEmbed
-from cdv.gnn import (
-    GN,
-    OldBessel1DBasis,
-    Bessel2DBasis,
-    DimeNetPP,
-    DimeNetPPOutput,
-    Fishnet,
-    GaussBasis,
-    InputEncoder,
-    LearnedSpecEmb,
-    MLPMessagePassing,
-    NodeAggReadout,
-    SegmentReduction,
-    TripletAngleEmbedding,
-)
-from cdv.layers import Identity, LazyInMLP, MLPMixer
+from cdv.layers import Identity, LazyInMLP
 from cdv.mace import MaceModel
-from cdv.mlp_mixer import MLPMixerRegressor, O3ImageEmbed
-from cdv.utils import ELEM_VALS
-from cdv.vae import VAE, Decoder, Encoder, LatentSpace, LatticeVAE, PropertyPredictor
+from cdv.vae import VAE, Decoder, Encoder, LatticeVAE, PropertyPredictor
 
 pyrallis.set_config_type('toml')
 
@@ -182,7 +159,7 @@ class DeviceConfig:
     device: str = 'gpu'
 
     # Limits the number of GPUs used. 0 means no limit.
-    max_gpus: int = 1
+    max_gpus: int = 0
 
     # IDs of GPUs to use.
     gpu_ids: list[int] = field(default_factory=list)
@@ -220,8 +197,7 @@ class DeviceConfig:
 
         os.environ['XLA_FLAGS'] = '--xla_force_host_platform_device_count=4'
 
-        import jax
-
+        # import jax
         # if self.max_gpus == 1:
         #     jax.config.update('jax_default_device', self.jax_device())
 
@@ -285,157 +261,6 @@ class MLPConfig:
             final_act=Layer(self.final_activation).build(),
             dropout_rate=self.dropout,
             residual=self.residual,
-        )
-
-
-@dataclass
-class GaussBasisConfig:
-    lo: float = 0
-    hi: float = 8
-    sd: float = 1
-    emb: int = 32
-
-    def build(self) -> GaussBasis:
-        return GaussBasis(self.lo, self.hi, self.sd, self.emb)
-
-
-@dataclass
-class SegmentReductionConfig:
-    reduction: str = 'mean'
-    kind: str = 'simple'
-    fishnet_mod: MLPConfig = field(default_factory=lambda: MLPConfig(out_dim=None))
-    fishnet_inner: int = 32
-
-    def build(self) -> SegmentReduction:
-        if self.kind == 'fishnet':
-            return Fishnet(
-                self.reduction, net_templ=self.fishnet_mod.build(), inner_dim=self.fishnet_inner
-            )
-        elif self.kind == 'simple':
-            return SegmentReduction(self.reduction)
-        else:
-            raise ValueError('Unknown kind')
-
-
-@dataclass
-class CoGNConfig:
-    # Edge initial embeddings.
-    dist_enc: GaussBasisConfig = field(default_factory=GaussBasisConfig)
-    # Node embedding dimension.
-    node_dim: int = 128
-    # Edge embedding dimension:
-    edge_dim: int = 128
-    # MLP for message passing.
-    msg_layer: MLPConfig = field(default_factory=lambda: MLPConfig(out_dim=None))
-    # MLP for node update.
-    node_layer: MLPConfig = field(default_factory=lambda: MLPConfig(out_dim=None))
-    # Number of processing blocks.
-    num_blocks: int = 5
-    # Reduction for node update.
-    node_update_reduction: SegmentReductionConfig = field(default_factory=SegmentReductionConfig)
-    # Node reduction for readout.
-    node_agg_reduction: SegmentReductionConfig = field(default_factory=SegmentReductionConfig)
-    # Readout head
-    readout_head: MLPConfig = field(default_factory=lambda: MLPConfig(out_dim=1))
-
-    def build(self, num_species: int) -> GN:
-        input_enc = InputEncoder(
-            self.dist_enc.build(),
-            nn.Dense(self.edge_dim),
-            LearnedSpecEmb(num_species, self.node_dim),
-        )
-        block_templ = MLPMessagePassing(
-            node_reduction=self.node_update_reduction.build(),
-            node_emb=self.node_dim,
-            msg_dim=self.node_dim,
-            msg_templ=self.msg_layer.build(),
-            node_templ=self.node_layer.build(),
-        )
-        readout = NodeAggReadout(self.readout_head.build().copy(out_dim=1))
-        return GN(input_enc, self.num_blocks, block_templ, readout)
-
-
-@dataclass
-class SpeciesEmbedConfig:
-    # Remember that this network will be applied for every voxel of every input point: it's how the
-    # data that downsamplers or any downstream encoders can use is generated. These are very
-    # flop-intensive parameters.
-
-    # Embedding dimension of the species.
-    species_embed_dim: int = 32
-    # MLP that embeds species embed + density to a new embedding.
-    spec_embed: MLPConfig = field(default_factory=lambda: MLPConfig(out_dim=64))
-    # Whether to use the above MLP config or a simple weighted average.
-    use_simple_weighting: bool = False
-
-    def build(self, data: DataConfig) -> ReduceSpeciesEmbed:
-        return ReduceSpeciesEmbed(
-            SpeciesEmbed(
-                len(data.metadata['elements']),
-                self.species_embed_dim,
-                self.spec_embed.build(),
-                self.use_simple_weighting,
-            ),
-            name='species_embed',
-        )
-
-
-@dataclass
-class DimeNetPPConfig:
-    num_radial: int = 8
-    num_spherical: int = 7
-    envelope_exp: int = 6
-    cutoff: float = 7
-    freq_trainable: bool = True
-    species_emb: int = 64
-    num_interaction_blocks: int = 4
-    act: Layer = field(default_factory=lambda: Layer('sigmoid'))
-    initial_embed: MLPConfig = field(default_factory=lambda: MLPConfig(out_dim=None))
-    int_dist_enc: MLPConfig = field(default_factory=lambda: MLPConfig(out_dim=None))
-    int_ang_enc: MLPConfig = field(default_factory=lambda: MLPConfig(out_dim=None))
-    int_down_proj: MLPConfig = field(default_factory=lambda: MLPConfig(out_dim=None))
-    int_up_proj: MLPConfig = field(default_factory=lambda: MLPConfig(out_dim=None))
-    int_pre_skip: MLPConfig = field(default_factory=lambda: MLPConfig(out_dim=None))
-    int_post_skip: MLPConfig = field(default_factory=lambda: MLPConfig(out_dim=None))
-    edge2node: SegmentReductionConfig = field(default_factory=SegmentReductionConfig)
-    node2graph: SegmentReductionConfig = field(default_factory=SegmentReductionConfig)
-    head: MLPConfig = field(default_factory=lambda: MLPConfig(out_dim=None))
-
-    def build(self, num_species: int) -> DimeNetPP:
-        distance_enc = OldBessel1DBasis(
-            num_basis=self.num_radial,
-            cutoff=self.cutoff,
-            envelope_exp=self.envelope_exp,
-            freq_trainable=self.freq_trainable,
-        )
-
-        return DimeNetPP(
-            input_enc=InputEncoder(
-                distance_enc=distance_enc.copy(),
-                distance_projector=Identity(),
-                species_emb=LearnedSpecEmb(num_specs=num_species, embed_dim=self.species_emb),
-            ),
-            sbf=TripletAngleEmbedding(
-                Bessel2DBasis(
-                    num_radial=self.num_radial,
-                    num_spherical=self.num_spherical,
-                    cutoff=self.cutoff,
-                    envelope_exp=self.envelope_exp,
-                )
-            ),
-            initial_embed_mlp=self.initial_embed.build(),
-            output=DimeNetPPOutput(
-                head=self.head.build(),
-                edge2node=self.edge2node.build(),
-                node2graph=self.node2graph.build(),
-            ),
-            int_dist_enc=self.int_dist_enc.build(),
-            int_ang_enc=self.int_ang_enc.build(),
-            int_down_proj_mlp=self.int_down_proj.build(),
-            int_up_proj_mlp=self.int_up_proj.build(),
-            int_pre_skip_mlp=self.int_pre_skip.build(),
-            int_post_skip_mlp=self.int_post_skip.build(),
-            num_interaction_blocks=self.num_interaction_blocks,
         )
 
 
@@ -625,11 +450,9 @@ class MainConfig:
     device: DeviceConfig = field(default_factory=DeviceConfig)
     log: LogConfig = field(default_factory=LogConfig)
     train: TrainingConfig = field(default_factory=TrainingConfig)
-    cogn: CoGNConfig = field(default_factory=CoGNConfig)
-    dimenet: DimeNetPPConfig = field(default_factory=DimeNetPPConfig)
     mace: MACEConfig = field(default_factory=MACEConfig)
 
-    regressor: str = 'dimenet'
+    regressor: str = 'mace'
 
     task: str = 'e_form'
 
@@ -686,11 +509,7 @@ class MainConfig:
         )
 
     def build_regressor(self):
-        if self.regressor == 'cogn':
-            return self.cogn.build(self.data.num_species)
-        elif self.regressor == 'dimenet':
-            return self.dimenet.build(self.data.num_species)
-        elif self.regressor == 'mace':
+        if self.regressor == 'mace':
             return self.mace.build(
                 self.data.num_species,
                 self.data.metadata['element_indices'],
@@ -699,10 +518,7 @@ class MainConfig:
                 scalar_std=self.data.metadata['e_form']['mean'],
             )
         else:
-            raise ValueError
-
-    def build_diled(self):
-        return self.diled.build(self.data)
+            raise ValueError(f'{self.regressor} not supported')
 
 
 if __name__ == '__main__':

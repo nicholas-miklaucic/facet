@@ -1,29 +1,21 @@
 """Code to load the processed data."""
 
+import functools as ft
 from collections.abc import Sequence
-import functools
-import zarr
-
-from functools import partial
-from itertools import batched, count, cycle
-from os import PathLike
-from pathlib import Path
+from itertools import batched, cycle
 from typing import Literal
 from warnings import filterwarnings
-import functools as ft
 
-from flax.serialization import from_state_dict, msgpack_restore, to_state_dict
 import jax
 import jax.numpy as jnp
 import numpy as np
 import pyrallis
+import zarr
 from beartype.roar import BeartypeDecorHintPep585DeprecationWarning
-from einops import rearrange
-from eins import EinsOp
+from flax.serialization import from_state_dict, to_state_dict
 
 from cdv.databatch import CrystalGraphs, collate
-from cdv.metadata import Metadata
-from cdv.utils import debug_stat, debug_structure, load_pytree
+from cdv.utils import debug_structure, load_pytree
 
 filterwarnings('ignore', category=BeartypeDecorHintPep585DeprecationWarning)
 
@@ -141,10 +133,10 @@ def dataloader_base(
 
     shuffle = shuffle_rng.permutation(split_idx)
 
-    add_length = -len(group_files) % (config.train_batch_multiple * num_devices)
+    add_length = -len(group_files) % (config.train_batch_multiple * config.stack_size * num_devices)
     if add_length != 0 and not allow_padding:
         raise ValueError(
-            f'{len(group_files)} does not evenly divide {config.train_batch_multiple} * {num_devices}'
+            f'{len(group_files)} does not evenly divide {config.train_batch_multiple} * {config.stack_size} * {num_devices}'
         )
 
     shuffle = np.hstack((shuffle, shuffle[:add_length]))
@@ -162,8 +154,9 @@ def dataloader_base(
 
     # file_data = list(map(functools.partial(load_raw, config), split_idx))
     # byte_data = dict(zip(split_idx, file_data))
+    stack_total = config.stack_size * num_devices
 
-    for batches in batched(batch_inds, num_devices):
+    for batches in batched(batch_inds, stack_total):
         for device_batch in batches:
             for i in device_batch:
                 split_files[i] = file_load_fn(config, *group_files[i])
@@ -183,7 +176,7 @@ def dataloader_base(
             len(shuffle) // config.train_batch_multiple,
         )
 
-        for batches in batched(batch_inds, num_devices):
+        for batches in batched(batch_inds, stack_total):
             collated = [collate([split_files[i] for i in batch]) for batch in batches]
             stacked = stack_trees(collated)
             yield jax.device_put(stacked, device)
@@ -201,8 +194,9 @@ def dataloader(
 
 
 if __name__ == '__main__':
-    from cdv.config import MainConfig
     import numpy as np
+
+    from cdv.config import MainConfig
 
     config = pyrallis.parse(config_class=MainConfig)
     config.cli.set_up_logging()

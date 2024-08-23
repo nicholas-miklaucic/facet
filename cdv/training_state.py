@@ -1,14 +1,13 @@
 from dataclasses import field
 import functools as ft
 import random
-from re import T
 import time
 from collections import defaultdict
 from datetime import datetime, timedelta
 from os import PathLike
 from pathlib import Path
 from shutil import copytree
-from typing import Any, Mapping, Optional, Sequence
+from typing import Any, Mapping, Sequence
 
 import chex
 import jax
@@ -17,7 +16,6 @@ import optax
 import orbax.checkpoint as ocp
 import pandas as pd
 import pyrallis
-from clu import metrics as cmetrics
 from flax import struct
 from flax import linen as nn
 from flax.training import train_state
@@ -26,8 +24,7 @@ from cdv.checkpointing import best_ckpt
 from cdv.config import LossConfig, MainConfig
 from cdv.dataset import CrystalGraphs, dataloader
 from cdv.layers import Context
-from cdv.utils import debug_structure, item_if_arr
-from cdv.vae import prop_loss
+from cdv.utils import item_if_arr
 
 
 @struct.dataclass

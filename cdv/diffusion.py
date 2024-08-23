@@ -3,15 +3,12 @@
 # https://github.com/HMUNACHI/nanodl/blob/main/nanodl/__src/models/diffusion.py
 
 import abc
-from typing import Sequence, Tuple
+from typing import Tuple
 
 import flax.linen as nn
 import jax
 import jax.numpy as jnp
 from chex import dataclass
-from eins import EinsOp
-
-from cdv.layers import LazyInMLP
 
 
 @dataclass
@@ -141,7 +138,9 @@ class DiffusionModel(nn.Module):
         eps = out['eps']
         sigma = out['sigma']
         sched = self.schedule.alpha_beta(data.t)
-        pred_images = 1 / jnp.sqrt(1 - sched['beta']) * (data.x_t - jnp.sqrt(1 - sched['alpha']) * eps)
+        pred_images = (
+            1 / jnp.sqrt(1 - sched['beta']) * (data.x_t - jnp.sqrt(1 - sched['alpha']) * eps)
+        )
         return {'mu': pred_images, 'eps': eps, 'sigma': sigma}
 
     def q_sample(self, x_t, t, noise):
@@ -167,48 +166,3 @@ class DiffusionModel(nn.Module):
 
         last_state, last_rng = jax.lax.fori_loop(0, data.t - 1, step, (data, rng))
         return last_state
-
-
-@dataclass
-class DiT(DiffusionBackbone, nn.Module):
-    condition_mlp_dims: Sequence[int]
-    time_dim: int
-    time_mlp: nn.Module
-    num_classes: int
-    label_dim: int
-    encoder: nn.Module
-    hidden_dim: int
-    condition_dropout: float = 0.0
-
-    def setup(self):
-        self.time_embed = TimestepEmbed(self.time_dim, mlp=self.time_mlp)
-        self.label_embed = LabelEmbed(num_classes=self.num_classes, embed_dim=self.label_dim)
-        self.condition_mlp = LazyInMLP(
-            self.condition_mlp_dims,
-            out_dim=6 * self.hidden_dim,
-            dropout_rate=self.condition_dropout,
-        )
-        self.aby_scale = self.param(
-            'aby_scale', lambda key: jnp.array([0, 1, 1, 0, 1, 1], dtype=jnp.float32)
-        )
-
-    def eps_sigma(self, data: DiffusionInput, schedule: DiffusionNoiseSchedule, training: bool):
-        t_emb = self.time_embed(jnp.broadcast_to(data.t, (data.x_t.shape[0],)), training=training)
-        y_emb = self.label_embed(data.y)
-        cond_emb = jnp.concatenate([t_emb, y_emb], axis=-1)
-        abys = self.condition_mlp(cond_emb, training=training)
-
-        abys = EinsOp('batch (dim aby), aby -> aby batch 1 dim', combine='multiply')(
-            abys, self.aby_scale
-        ).astype(jnp.bfloat16)
-
-        x_t_reshaped = EinsOp('batch n n n dim -> batch (n n n) dim')(data.x_t).astype(jnp.bfloat16)
-
-        unflatten = EinsOp('batch (n=8 n n) dim -> batch n n n dim')
-
-        return {
-            'eps': unflatten(self.encoder(x_t_reshaped, abys, training=training)).astype(
-                jnp.bfloat16
-            ),
-            'sigma': schedule.alpha_beta(data.t)['beta'],
-        }

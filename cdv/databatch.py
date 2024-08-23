@@ -1,8 +1,6 @@
 from typing import Sequence
 from flax import struct
-from collections import defaultdict
 from jaxtyping import Float, Array, Int, Bool
-from cdv.utils import debug_structure
 import e3nn_jax as e3nn
 import jax
 import jax.numpy as jnp

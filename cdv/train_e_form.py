@@ -1,6 +1,5 @@
 """Training run file."""
 
-from typing import Literal
 from pyrallis import wrap
 
 from cdv.config import MainConfig

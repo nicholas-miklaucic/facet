@@ -8,14 +8,12 @@ import jax
 import optax
 
 from cdv.databatch import CrystalGraphs
-from cdv.gnn import GN, InputEncoder, NodeAggReadout, ProcessingBlock, Readout
-from cdv.layers import Context, E3Irreps, E3IrrepsArray, LazyInMLP
+from cdv.layers import Context, LazyInMLP
 from jaxtyping import Float, Array
 import jax.numpy as jnp
 import jax.random as jr
 
 from cdv.mace import MaceModel
-from cdv.utils import debug_structure, debug_stat
 
 
 class LatentOutput(struct.PyTreeNode):

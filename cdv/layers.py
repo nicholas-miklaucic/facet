@@ -1,10 +1,8 @@
 """Layers useful in different contexts."""
 
-import functools
 from typing import Callable, Literal, Optional, Sequence
 
 import e3nn_jax as e3nn
-import einops
 import jax
 import jax.numpy as jnp
 from eins import EinsOp
@@ -12,14 +10,14 @@ from flax import linen as nn
 from flax import struct
 from jaxtyping import Array, Float
 
-from cdv.utils import debug_structure, tcheck
+from cdv.utils import tcheck
 
 E3Irreps = e3nn.Irreps
 E3IrrepsArray = e3nn.IrrepsArray
 
 
 import yaml
-from yaml import Dumper, Node, SafeDumper, add_representer
+from yaml import Node, SafeDumper
 
 
 def represent_irreps(d: SafeDumper, e: E3Irreps) -> Node:
@@ -47,6 +45,34 @@ def edge_vecs(cg):
 
 class Context(struct.PyTreeNode):
     training: bool
+
+
+SegmentReductionKind = Literal['max', 'min', 'prod', 'sum', 'mean']
+
+
+def segment_mean(data, segment_ids, **kwargs):
+    return jax.ops.segment_sum(data, segment_ids, **kwargs) / (
+        1e-6 + jax.ops.segment_sum(jnp.ones_like(data), segment_ids, **kwargs)
+    )
+
+
+def segment_reduce(reduction: SegmentReductionKind, data, segment_ids, **kwargs):
+    try:
+        fn = getattr(jax.ops, f'segment_{reduction}')
+    except AttributeError:
+        if reduction == 'mean':
+            fn = segment_mean
+        else:
+            raise ValueError('Cannot find reduction')
+
+    return fn(data, segment_ids, **kwargs)
+
+
+class SegmentReduction(nn.Module):
+    reduction: SegmentReductionKind = 'sum'
+
+    def __call__(self, data, segments, num_segments, ctx):
+        return segment_reduce(self.reduction, data, segments, num_segments=num_segments)
 
 
 class Identity(nn.Module):

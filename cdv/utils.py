@@ -3,10 +3,8 @@
 from inspect import signature
 import io
 import re
-from abc import ABCMeta
 from dataclasses import asdict, is_dataclass
 from functools import partial
-from math import isfinite
 from os import PathLike
 from pathlib import Path
 from types import MappingProxyType
@@ -19,10 +17,9 @@ import jax
 import jax.numpy as jnp
 import numpy as np
 import rich
-from flax.serialization import msgpack_restore, msgpack_serialize
+from flax.serialization import msgpack_restore
 from flax.serialization import to_bytes
 from jaxtyping import jaxtyped
-from pymatgen.core import Element
 from rich.style import Style
 from rich.text import Text
 from rich.tree import Tree
@@ -54,10 +51,6 @@ INFERNA = [
     '#2f23a3',
     '#00229c',
 ]
-
-from rich.console import Console
-from rich.highlighter import RegexHighlighter
-from rich.theme import Theme
 
 
 def format_scalar(scalar: int | float, chars=6) -> str:
