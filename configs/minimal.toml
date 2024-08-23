@@ -1,5 +1,0 @@
-[cogn.readout_head]
-out_dim = 1
-
-[dimenet.act]
-name = "sigmoid"

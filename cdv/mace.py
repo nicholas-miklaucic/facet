@@ -32,29 +32,6 @@ class LinearNodeEmbedding(nn.Module):
     irreps_out: E3Irreps
 
     def setup(self):
-        def skipatom_init(key, shape, dtype):
-            import pickle
-            import pandas as pd
-
-            with open('data/mp_2020_10_09.dim250.keras.model', 'rb') as fin:
-                data = pickle.load(fin)
-
-            atoms = list(
-                pd.read_csv(
-                    'https://raw.githubusercontent.com/lantunes/skipatom/main/data/atoms.txt',
-                    header=None,
-                ).values.reshape(-1)
-            )
-
-            embed_i = list(map(atoms.index, ELEM_VALS))
-            embeds = jnp.array(data[embed_i], dtype=dtype)
-            curr_dim = embeds.shape[-1]
-            *batch, out_dim = shape
-
-            pad_shape = (*batch, out_dim - curr_dim)
-
-            return jnp.concat((embeds, jax.random.normal(key, pad_shape, dtype) * 0.01), axis=-1)
-
         self.irreps_out_calc = E3Irreps(self.irreps_out).filter('0e').regroup()
         self.out_dim = E3Irreps(self.irreps_out_calc).dim
         self.embed = nn.Embed(

@@ -2,7 +2,8 @@ batch_size = 32
 stack_size = 1
 do_profile = false
 num_epochs = 20
-regressor = "dimenet"
+display = "dashboard"
+regressor = "mace"
 task = "e_form"
 
 [data]
@@ -13,6 +14,7 @@ shuffle_seed = 1618
 train_split = 30
 test_split = 3
 valid_split = 3
+batches_per_group = 0
 batch_n_nodes = 1024
 k = 16
 batch_n_graphs = 32
@@ -23,7 +25,7 @@ show_progress = true
 
 [device]
 device = "gpu"
-max_gpus = 1
+max_gpus = 0
 gpu_ids = []
 
 [log]
@@ -45,20 +47,6 @@ max_grad_norm = 1.0
 schedule_free = false
 prodigy = false
 
-[cogn]
-node_dim = 128
-edge_dim = 128
-num_blocks = 5
-
-[dimenet]
-num_radial = 8
-num_spherical = 7
-envelope_exp = 6
-cutoff = 7
-freq_trainable = true
-species_emb = 64
-num_interaction_blocks = 4
-
 [mace]
 max_ell = 3
 num_interactions = 2
@@ -68,156 +56,6 @@ readout_mlp_irreps = "16x0e"
 interaction_reduction = "mean"
 node_reduction = "mean"
 
-[cogn.dist_enc]
-lo = 0
-hi = 8
-sd = 1
-emb = 32
-
-[cogn.msg_layer]
-inner_dims = []
-activation = "swish"
-final_activation = "Identity"
-dropout = 0.0
-residual = false
-num_heads = 1
-
-[cogn.node_layer]
-inner_dims = []
-activation = "swish"
-final_activation = "Identity"
-dropout = 0.0
-residual = false
-num_heads = 1
-
-[cogn.node_update_reduction]
-reduction = "mean"
-kind = "simple"
-fishnet_inner = 32
-
-[cogn.node_agg_reduction]
-reduction = "mean"
-kind = "simple"
-fishnet_inner = 32
-
-[cogn.readout_head]
-inner_dims = []
-activation = "swish"
-final_activation = "Identity"
-out_dim = 1
-dropout = 0.0
-residual = false
-num_heads = 1
-
-[dimenet.act]
-name = "sigmoid"
-
-[dimenet.initial_embed]
-inner_dims = []
-activation = "swish"
-final_activation = "Identity"
-dropout = 0.0
-residual = false
-num_heads = 1
-
-[dimenet.int_dist_enc]
-inner_dims = []
-activation = "swish"
-final_activation = "Identity"
-dropout = 0.0
-residual = false
-num_heads = 1
-
-[dimenet.int_ang_enc]
-inner_dims = []
-activation = "swish"
-final_activation = "Identity"
-dropout = 0.0
-residual = false
-num_heads = 1
-
-[dimenet.int_down_proj]
-inner_dims = []
-activation = "swish"
-final_activation = "Identity"
-dropout = 0.0
-residual = false
-num_heads = 1
-
-[dimenet.int_up_proj]
-inner_dims = []
-activation = "swish"
-final_activation = "Identity"
-dropout = 0.0
-residual = false
-num_heads = 1
-
-[dimenet.int_pre_skip]
-inner_dims = []
-activation = "swish"
-final_activation = "Identity"
-dropout = 0.0
-residual = false
-num_heads = 1
-
-[dimenet.int_post_skip]
-inner_dims = []
-activation = "swish"
-final_activation = "Identity"
-dropout = 0.0
-residual = false
-num_heads = 1
-
-[dimenet.edge2node]
-reduction = "mean"
-kind = "simple"
-fishnet_inner = 32
-
-[dimenet.node2graph]
-reduction = "mean"
-kind = "simple"
-fishnet_inner = 32
-
-[dimenet.head]
-inner_dims = []
-activation = "swish"
-final_activation = "Identity"
-dropout = 0.0
-residual = false
-num_heads = 1
-
 [train.loss.reg_loss]
 loss_delta = 0.015625
 use_rmse = false
-
-[cogn.node_update_reduction.fishnet_mod]
-inner_dims = []
-activation = "swish"
-final_activation = "Identity"
-dropout = 0.0
-residual = false
-num_heads = 1
-
-[cogn.node_agg_reduction.fishnet_mod]
-inner_dims = []
-activation = "swish"
-final_activation = "Identity"
-dropout = 0.0
-residual = false
-num_heads = 1
-
-[dimenet.edge2node.fishnet_mod]
-inner_dims = []
-activation = "swish"
-final_activation = "Identity"
-dropout = 0.0
-residual = false
-num_heads = 1
-
-[dimenet.node2graph.fishnet_mod]
-inner_dims = []
-activation = "swish"
-final_activation = "Identity"
-dropout = 0.0
-residual = false
-num_heads = 1

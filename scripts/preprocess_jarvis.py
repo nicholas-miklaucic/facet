@@ -8,8 +8,12 @@ import flax
 import flax.linen as nn
 import numpy as np
 import pandas as pd
-from cdv.utils import ELEM_VALS
 from cdv.databatch import CrystalGraphs, NodeData, EdgeData, CrystalData, DIMENSIONALITIES
+
+ELEM_VALS = (
+    'K Rb Ba Na Sr Li Ca La Tb Yb Ce Pr Nd Sm Dy Y Ho Er Tm Hf Mg Zr Sc U Ta Ti Mn Be Nb Al Tl V Zn Cr Cd'
+    ' In Ga Fe Co Cu Si Ni Ag Sn Hg Ge Bi B Sb Te Mo As P H Ir Os Pd Ru Pt Rh Pb W Au C Se S I Br N Cl O F'
+).split(' ')
 
 MAX_IN = 32
 MAX_OUT = 20
