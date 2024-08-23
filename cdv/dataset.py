@@ -91,6 +91,7 @@ def dataloader_base(
     split: Literal['train', 'test', 'valid'] = 'train',
     infinite: bool = False,
     use_zarr: bool = False,
+    allow_padding: bool = True,
 ):
     """Returns a generator that produces batches to train on. If infinite, repeats forever:
     otherwise, stops when all data has been yielded."""
@@ -138,13 +139,19 @@ def dataloader_base(
 
     split_idx = np.arange(len(group_files))
 
-    trunc_length = len(group_files) - len(group_files) % config.train_batch_multiple
-
     shuffle = shuffle_rng.permutation(split_idx)
 
+    add_length = -len(group_files) % (config.train_batch_multiple * num_devices)
+    if add_length != 0 and not allow_padding:
+        raise ValueError(
+            f'{len(group_files)} does not evenly divide {config.train_batch_multiple} * {num_devices}'
+        )
+
+    shuffle = np.hstack((shuffle, shuffle[:add_length]))
+
     batch_inds = np.split(
-        shuffle[:trunc_length],
-        len(group_files) // config.train_batch_multiple,
+        shuffle,
+        len(shuffle) // config.train_batch_multiple,
     )
 
     yield len(batch_inds)
@@ -164,14 +171,18 @@ def dataloader_base(
         stacked = stack_trees(collated)
         yield jax.device_put(stacked, device)
 
-    for i in shuffle[trunc_length:]:
-        split_files[i] = file_load_fn(config, *group_files[i])
+    # for i in shuffle[trunc_length:]:
+    #     split_files[i] = file_load_fn(config, *group_files[i])
 
     while infinite:
+        shuffle = shuffle_rng.permutation(split_idx)
+        shuffle = np.hstack((shuffle, shuffle[:add_length]))
+
         batch_inds = np.split(
-            shuffle_rng.permutation(split_idx)[:trunc_length],
-            len(split_idx) // config.train_batch_multiple,
+            shuffle,
+            len(shuffle) // config.train_batch_multiple,
         )
+
         for batches in batched(batch_inds, num_devices):
             collated = [collate([split_files[i] for i in batch]) for batch in batches]
             stacked = stack_trees(collated)

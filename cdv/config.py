@@ -617,6 +617,9 @@ class MainConfig:
     # Folder to initialize the encoders and downsampling.
     encoder_start_from: Optional[Path] = None
 
+    # Display kind for training runs: One of 'dashboard', 'progress', or 'quiet'.
+    display: str = 'dashboard'
+
     data: DataConfig = field(default_factory=DataConfig)
     cli: CLIConfig = field(default_factory=CLIConfig)
     device: DeviceConfig = field(default_factory=DeviceConfig)

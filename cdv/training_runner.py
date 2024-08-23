@@ -12,6 +12,17 @@ def run_using_dashboard(config: MainConfig):
     return run
 
 
+def run_quietly(config: MainConfig):
+    run = TrainingRun(config)
+
+    for _run_state in run.step_until_done():
+        continue
+
+    print('Saved to:')
+    print(run.finish().absolute())
+    return run
+
+
 def run_using_progress(config: MainConfig):
     import rich.progress as prog
 
