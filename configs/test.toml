@@ -1,7 +1,7 @@
 batch_size = 256
 stack_size = 1
 do_profile = false
-num_epochs = 20
+num_epochs = 10
 regressor = "mace"
 task = "e_form"
 
@@ -23,9 +23,9 @@ gpu_ids = [0, 1, 2]
 
 [log]
 log_dir = "logs"
-logs_per_epoch = 8
+logs_per_epoch = 16
 epochs_per_ckpt = 10
-exp_name = "testing"
+exp_name = "before-hpo"
 
 [train]
 lr_schedule_kind = "cosine"
@@ -41,11 +41,11 @@ schedule_free = false
 prodigy = false
 
 [mace]
-max_ell = 2
+max_ell = 3
 # num_interactions = 5
-num_interactions = 1
+num_interactions = 2
 hidden_irreps = "256x0e"
-correlation = 2
+correlation = 3
 readout_mlp_irreps = "256x0e"
 
 [train.loss.reg_loss]
