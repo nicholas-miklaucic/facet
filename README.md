@@ -5,9 +5,13 @@ Working repository for diffusion and prediction models using MACE.
 - Get forces/stress working
 - Normalize those outputs properly, store in dataset metadata
 - Add per-layer irreps
-- W&B
-- Full diffusion, not just CDVAE
-- Training sweep for below
+
+
+Options:
+- Mixing type
+- Self-interaction type
+- Per-layer irreps
+
 
 ## Ideas
 ### Prediction Gradients

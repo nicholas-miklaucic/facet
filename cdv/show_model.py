@@ -24,6 +24,8 @@ def show_model(config: MainConfig, make_hlo_dot=False, do_profile=False):
     for i, b in zip(range(2), dl):
         batch = b
 
+    batch = jax.device_put(batch, config.device.devices()[0])
+
     debug_structure(batch=batch)
 
     if config.task == 'e_form':
@@ -32,9 +34,6 @@ def show_model(config: MainConfig, make_hlo_dot=False, do_profile=False):
     elif config.task == 'vae':
         mod = config.build_vae()
         rngs = {'noise': jax.random.key(123)}
-    elif config.task == 'diled':
-        mod = config.build_diled()
-        rngs = {'noise': jax.random.key(123), 'time': jax.random.key(234)}
 
     rngs['params'] = jax.random.key(0)
     rngs['dropout'] = jax.random.key(1)
@@ -43,10 +42,14 @@ def show_model(config: MainConfig, make_hlo_dot=False, do_profile=False):
     #     rngs[k] = jax.device_put(v, )
 
     params = mod.init(rngs, b1, **kwargs)
-    params = jax.device_put_replicated(params, config.device.devices())
+    batch = jax.tree_map(lambda x: x[:1], batch)
+    # params = jax.device_put_replicated(params, config.device.devices())
+
+    base_apply_fn = jax.vmap(lambda p, b: mod.apply(p, b, rngs=rngs, **kwargs), in_axes=(None, 0))
+    apply_fn = jax.jit(base_apply_fn)
 
     with jax.debug_nans():
-        out = jax.vmap(lambda p, b: mod.apply(p, b, rngs=rngs, **kwargs))(params, batch)
+        out = apply_fn(params, batch)
 
     # kwargs['cg'] = b1
     # print(params['params']['edge_proj']['kernel'].devices())
@@ -56,13 +59,13 @@ def show_model(config: MainConfig, make_hlo_dot=False, do_profile=False):
     flax_summary(mod, rngs=rngs, cg=b1, **kwargs)
 
     debug_stat(out=out)
-    rot_batch = jax.pmap(lambda x: x.rotate(123)[0])(batch)
+    rot_batch = jax.vmap(lambda x: x.rotate(123)[0])(batch)
 
-    if True:
-        rot_out = jax.pmap(lambda p, b: mod.apply(p, b, rngs=rngs, **kwargs))(params, rot_batch)
+    if False:
+        rot_out = apply_fn(params, rot_batch)
     else:
         with nn.intercept_methods(intercept_stat):
-            rot_out = jax.pmap(lambda p, b: mod.apply(p, b, rngs=rngs, **kwargs))(params, rot_batch)
+            rot_out = base_apply_fn(params, rot_batch)
 
     if config.task == 'e_form':
         debug_stat(equiv_error=jnp.abs(rot_out - out))
@@ -70,12 +73,10 @@ def show_model(config: MainConfig, make_hlo_dot=False, do_profile=False):
         debug_stat(equiv_error=jax.tree.map(lambda x, y: jnp.abs(x - y), rot_out, out))
 
     def loss(params):
-        preds = jax.pmap(lambda p, b: mod.apply(p, b, rngs=rngs, ctx=Context(training=True)))(
-            params, batch
-        )
+        preds = apply_fn(params, batch)
         if config.task == 'e_form':
             return {
-                'loss': jax.pmap(config.train.loss.regression_loss)(
+                'loss': jax.vmap(config.train.loss.regression_loss)(
                     preds, batch.e_form[..., None], batch.padding_mask
                 )
             }

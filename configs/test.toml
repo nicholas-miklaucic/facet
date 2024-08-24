@@ -1,5 +1,5 @@
-batch_size = 32
-stack_size = 2
+batch_size = 256
+stack_size = 1
 do_profile = false
 num_epochs = 5
 regressor = "mace"
@@ -10,7 +10,7 @@ shuffle_seed = 1618
 train_split = 3
 test_split = 30
 valid_split = 3
-batches_per_group = 100
+batches_per_group = 300
 
 [cli]
 verbosity = "info"
@@ -30,7 +30,7 @@ exp_name = "refactor"
 [train]
 lr_schedule_kind = "cosine"
 start_lr_frac = 0.1
-base_lr = 1e-3
+base_lr = 4e-3
 end_lr_frac = 0.04
 weight_decay = 0.001
 beta_1 = 0.9
@@ -41,12 +41,12 @@ schedule_free = false
 prodigy = false
 
 [mace]
-max_ell = 3
+max_ell = 2
 # num_interactions = 5
-num_interactions = 2
-hidden_irreps = "256x0e"
+num_interactions = 1
+hidden_irreps = "128x0e"
 correlation = 3
-readout_mlp_irreps = "256x0e"
+readout_mlp_irreps = "128x0e"
 
 [train.loss.reg_loss]
 loss_delta = 0.015625

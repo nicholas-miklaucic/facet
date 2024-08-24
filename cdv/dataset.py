@@ -111,9 +111,9 @@ def dataloader_base(
 
     device = config.device.jax_device()
     if isinstance(device, jax.sharding.Sharding):
-        num_devices = len(device.addressable_devices) * config.stack_size
+        stack_total = len(device.addressable_devices) * config.stack_size
     else:
-        num_devices = config.stack_size
+        stack_total = config.stack_size
 
     split_groups = [groups[i] for i in split_idx]
 
@@ -133,10 +133,10 @@ def dataloader_base(
 
     shuffle = shuffle_rng.permutation(split_idx)
 
-    add_length = -len(group_files) % (config.train_batch_multiple * config.stack_size * num_devices)
+    add_length = -len(group_files) % (config.train_batch_multiple * stack_total)
     if add_length != 0 and not allow_padding:
         raise ValueError(
-            f'{len(group_files)} does not evenly divide {config.train_batch_multiple} * {config.stack_size} * {num_devices}'
+            f'{len(group_files)} does not evenly divide {config.train_batch_multiple} * {stack_total // config.stack_size} * {config.stack_size}'
         )
 
     shuffle = np.hstack((shuffle, shuffle[:add_length]))
@@ -154,7 +154,6 @@ def dataloader_base(
 
     # file_data = list(map(functools.partial(load_raw, config), split_idx))
     # byte_data = dict(zip(split_idx, file_data))
-    stack_total = config.stack_size * num_devices
 
     for batches in batched(batch_inds, stack_total):
         for device_batch in batches:

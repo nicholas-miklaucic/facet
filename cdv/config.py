@@ -120,6 +120,39 @@ class LoggingLevel(Enum):
 
 
 @dataclass
+class RegressionLossConfig:
+    """Config defining the loss function."""
+
+    # delta for smoother_l1_loss: the switch point between the smooth version and pure L1 loss.
+    loss_delta: float = 1 / 64
+
+    # Whether to use RMSE loss instead.
+    use_rmse: bool = False
+
+    def smoother_l1_loss(self, preds, targets):
+        a = -5 / 2 / 8
+        b = 63 / 8 / 6
+        c = -35 / 4 / 4
+        d = 35 / 8 / 2
+        x = (preds - targets) / self.loss_delta
+        x2 = x * x
+        x_abs = jnp.abs(x)
+        y = jnp.where(x_abs < 1, x2 * d + (x2 * c + (x2 * b + (x2 * a))), x_abs)
+        return y * self.loss_delta
+
+    def regression_loss(self, preds, targets, mask):
+        if preds.shape != targets.shape:
+            msg = f'Incorrect input shapes: {preds.shape} != {targets.shape}'
+            raise ValueError(msg)
+        if preds.ndim == 2:
+            mask = mask[:, None]
+        if self.use_rmse:
+            return jnp.sqrt(optax.losses.squared_error(preds, targets).mean(where=mask))
+        else:
+            return self.smoother_l1_loss(preds, targets).mean(where=mask)
+
+
+@dataclass
 class CLIConfig:
     # Verbosity of output.
     verbosity: LoggingLevel = LoggingLevel.info
@@ -272,8 +305,9 @@ class MACEConfig:
     # hidden_irreps = '16x0e + 16x1o'
     correlation: int = 3  # 4 is better but 5x slower
     readout_mlp_irreps: str = '16x0e'
-    interaction_reduction: str = 'mean'
+    interaction_reduction: str = 'last'
     node_reduction: str = 'mean'
+    gate: str = 'silu'
 
     def build(
         self,
@@ -301,39 +335,6 @@ class MACEConfig:
             scalar_mean=scalar_mean,
             scalar_std=scalar_std,
         )
-
-
-@dataclass
-class RegressionLossConfig:
-    """Config defining the loss function."""
-
-    # delta for smoother_l1_loss: the switch point between the smooth version and pure L1 loss.
-    loss_delta: float = 1 / 64
-
-    # Whether to use RMSE loss instead.
-    use_rmse: bool = False
-
-    def smoother_l1_loss(self, preds, targets):
-        a = -5 / 2 / 8
-        b = 63 / 8 / 6
-        c = -35 / 4 / 4
-        d = 35 / 8 / 2
-        x = (preds - targets) / self.loss_delta
-        x2 = x * x
-        x_abs = jnp.abs(x)
-        y = jnp.where(x_abs < 1, x2 * d + (x2 * c + (x2 * b + (x2 * a))), x_abs)
-        return y * self.loss_delta
-
-    def regression_loss(self, preds, targets, mask):
-        if preds.shape != targets.shape:
-            msg = f'Incorrect input shapes: {preds.shape} != {targets.shape}'
-            raise ValueError(msg)
-        if preds.ndim == 2:
-            mask = mask[:, None]
-        if self.use_rmse:
-            return jnp.sqrt(optax.losses.squared_error(preds, targets).mean(where=mask))
-        else:
-            return self.smoother_l1_loss(preds, targets).mean(where=mask)
 
 
 @dataclass
