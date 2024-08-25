@@ -24,6 +24,7 @@ from cdv.checkpointing import best_ckpt
 from cdv.config import LossConfig, MainConfig
 from cdv.dataset import CrystalGraphs, dataloader
 from cdv.layers import Context
+from cdv.regression import EFSOutput, EFSWrapper
 from cdv.utils import item_if_arr
 
 
@@ -130,15 +131,7 @@ class TrainingRun:
         preds,
         rng=None,
     ):
-        if task == 'e_form':
-            preds = preds
-            e_form = batch.e_form[..., None]
-            mask = batch.padding_mask[..., None]
-            loss = config.regression_loss(preds, e_form, mask)
-            mae = jnp.abs(preds - e_form).mean(where=mask)
-            rmse = jnp.sqrt(optax.losses.squared_error(preds, e_form).mean(where=mask))
-            metric_updates = dict(mae=mae, loss=loss, rmse=rmse, grad_norm=state.last_grad_norm)
-        elif task == 'diled' or task == 'vae':
+        if task == 'e_form' or task == 'diled' or task == 'vae':
             losses = {k: jnp.mean(v) for k, v in preds.items()}
             losses['grad_norm'] = state.last_grad_norm
             metric_updates = dict(**losses)
@@ -167,11 +160,14 @@ class TrainingRun:
         mesh = Mesh(mesh_utils.create_device_mesh(len(devs), devices=devs), 'batch')
 
         def loss_fn(params, batch):
-            preds = state.apply_fn(params, batch, ctx=Context(training=True), rngs=rng)
             if task == 'e_form':
-                loss = config.regression_loss(preds.squeeze(), batch.e_form, batch.padding_mask)
-                return loss, preds
+                preds = EFSWrapper()(
+                    state.apply_fn, params, batch, ctx=Context(training=True), rngs=rng
+                )
+                loss = config.efs_loss(batch, preds)
+                return loss['loss'].mean(), loss
             else:
+                preds = state.apply_fn(params, batch, ctx=Context(training=True), rngs=rng)
                 return preds['loss'].mean(axis=-1), preds
 
         @ft.partial(jax.vmap, in_axes=(None, 0))
@@ -222,9 +218,7 @@ class TrainingRun:
         return state, preds
 
     def make_model(self):
-        if self.config.task == 'diled':
-            return self.config.build_diled()
-        elif self.config.task == 'e_form':
+        if self.config.task == 'e_form':
             return self.config.build_regressor()
         elif self.config.task == 'vae':
             return self.config.build_vae()

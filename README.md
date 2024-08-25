@@ -7,10 +7,19 @@ Working repository for diffusion and prediction models using MACE.
 - Add per-layer irreps
 
 
+- Per-layer irreps
+- Linear self-interaction
+- Species-wise rescaling
+- Force/stress
+- Correct avg_num_neighbors
+
 Options:
 - Mixing type
 - Self-interaction type
 - Per-layer irreps
+
+
+
 
 
 ## Ideas

@@ -7,10 +7,10 @@ task = "e_form"
 
 [data]
 shuffle_seed = 1618
-train_split = 3
-test_split = 30
-valid_split = 3
-batches_per_group = 300
+train_split = 15
+test_split = 15
+valid_split = 6
+batches_per_group = 0
 
 [cli]
 verbosity = "info"
@@ -32,7 +32,7 @@ lr_schedule_kind = "cosine"
 start_lr_frac = 0.1
 base_lr = 4e-3
 end_lr_frac = 0.04
-weight_decay = 0.001
+weight_decay = 1e-8
 beta_1 = 0.9
 beta_2 = 0.999
 nestorov = true
@@ -43,10 +43,10 @@ prodigy = false
 [mace]
 max_ell = 2
 # num_interactions = 5
-num_interactions = 1
-hidden_irreps = "128x0e"
+num_interactions = 2
+hidden_irreps = "128x0e + 64x1o + 32x2e"
 correlation = 3
-readout_mlp_irreps = "128x0e"
+readout_mlp_irreps = "128x0e + 64x1o + 32x2e"
 
 [train.loss.reg_loss]
 loss_delta = 0.015625

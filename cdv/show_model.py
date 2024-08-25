@@ -9,6 +9,7 @@ from flax import linen as nn
 from cdv.config import MainConfig
 from cdv.dataset import dataloader
 from cdv.layers import Context
+from cdv.regression import EFSLoss, EFSWrapper
 from cdv.utils import debug_stat, debug_structure, flax_summary, intercept_stat
 
 
@@ -45,50 +46,46 @@ def show_model(config: MainConfig, make_hlo_dot=False, do_profile=False):
     batch = jax.tree_map(lambda x: x[:1], batch)
     # params = jax.device_put_replicated(params, config.device.devices())
 
-    base_apply_fn = jax.vmap(lambda p, b: mod.apply(p, b, rngs=rngs, **kwargs), in_axes=(None, 0))
+    base_apply_fn = jax.vmap(
+        lambda p, b: EFSWrapper()(mod.apply, p, b, rngs=rngs, **kwargs), in_axes=(None, 0)
+    )
     apply_fn = jax.jit(base_apply_fn)
+
+    def loss_fn(params, preds=None):
+        if preds is None:
+            preds = apply_fn(params, batch)
+        if config.task == 'e_form':
+            return jax.tree_map(jnp.mean, jax.vmap(config.train.loss.efs_loss)(batch, preds))
+        else:
+            return preds
 
     with jax.debug_nans():
         out = apply_fn(params, batch)
+        loss = loss_fn(params, out)
 
     # kwargs['cg'] = b1
     # print(params['params']['edge_proj']['kernel'].devices())
-    debug_structure(module=mod, out=out)
-    debug_stat(input=batch)
+    debug_structure(module=mod, out=out, loss=loss)
+    debug_stat(input=batch, out=out, loss=loss)
     rngs.pop('params')
     flax_summary(mod, rngs=rngs, cg=b1, **kwargs)
 
-    debug_stat(out=out)
     rot_batch = jax.vmap(lambda x: x.rotate(123)[0])(batch)
 
-    if False:
+    if True:
         rot_out = apply_fn(params, rot_batch)
     else:
         with nn.intercept_methods(intercept_stat):
             rot_out = base_apply_fn(params, rot_batch)
 
-    if config.task == 'e_form':
-        debug_stat(equiv_error=jnp.abs(rot_out - out))
-    elif config.task == 'vae':
-        debug_stat(equiv_error=jax.tree.map(lambda x, y: jnp.abs(x - y), rot_out, out))
-
-    def loss(params):
-        preds = apply_fn(params, batch)
-        if config.task == 'e_form':
-            return {
-                'loss': jax.vmap(config.train.loss.regression_loss)(
-                    preds, batch.e_form[..., None], batch.padding_mask
-                )
-            }
-        else:
-            return preds
+    debug_stat(equiv_error=jax.tree.map(lambda x, y: jnp.abs(x - y), rot_out, out))
 
     if do_profile:
         with jax.profiler.trace('/tmp/jax-trace', create_perfetto_trace=True):
-            val, grad = jax.value_and_grad(lambda x: jnp.mean(loss(x)['loss']))(params)
+            val, grad = jax.value_and_grad(lambda x: jnp.mean(loss_fn(x)['loss']))(params)
             jax.block_until_ready(grad)
     else:
-        val, grad = jax.value_and_grad(lambda x: jnp.mean(loss(x)['loss']))(params)
+        val, grad = jax.value_and_grad(lambda x: jnp.mean(loss_fn(x)['loss']))(params)
     debug_stat(val=val, grad=grad)
 
     if not make_hlo_dot:

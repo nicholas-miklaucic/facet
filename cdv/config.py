@@ -17,6 +17,7 @@ from pyrallis.fields import field
 from cdv import layers
 from cdv.layers import Identity, LazyInMLP
 from cdv.mace import MaceModel
+from cdv.regression import EFSLoss
 from cdv.vae import VAE, Decoder, Encoder, LatticeVAE, PropertyPredictor
 
 pyrallis.set_config_type('toml')
@@ -342,9 +343,21 @@ class LossConfig:
     """Config defining the loss function."""
 
     reg_loss: RegressionLossConfig = field(default_factory=RegressionLossConfig)
+    energy_weight: float = 1
+    force_weight: float = 0.1
+    stress_weight: float = 0.01
 
     def regression_loss(self, preds, targets, mask):
         return self.reg_loss.regression_loss(preds, targets, mask)
+
+    @property
+    def efs_loss(self) -> EFSLoss:
+        return EFSLoss(
+            loss_fn=self.reg_loss.regression_loss,
+            energy_weight=self.energy_weight,
+            force_weight=self.force_weight,
+            stress_weight=self.stress_weight,
+        )
 
 
 @dataclass
