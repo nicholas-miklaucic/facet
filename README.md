@@ -6,11 +6,9 @@ Working repository for diffusion and prediction models using MACE.
 - Normalize those outputs properly, store in dataset metadata
 - Add per-layer irreps
 
-
+- Model FLOPS/params
 - Per-layer irreps
-- Linear self-interaction
 - Species-wise rescaling
-- Force/stress
 - Correct avg_num_neighbors
 
 Options:

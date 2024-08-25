@@ -45,9 +45,10 @@ class Losses(PlotextPlot):
         """
         super().__init__(name=name, id=id, classes=classes, disabled=disabled)
         self._title = title
-        self._unit = 'L2 Loss'
+        self._unit = 'Value'
         self._data = {}
         self._colors = colors
+        self._plotted = None
 
     def on_mount(self) -> None:
         """Plot the data using Plotext."""
@@ -74,19 +75,40 @@ class Losses(PlotextPlot):
             # when computing y-axis
             cutoff = max(0, np.sqrt(x_end) - 2)
 
+            losses = [k for k in self._data if k.endswith('_loss')]
+            ymax = max(
+                [
+                    max([y for x, y in zip(xx, self._data[k]) if x >= cutoff], default=10)
+                    for k in losses
+                ],
+                default=10,
+            )
+
+            plotted = []
+
             for name, color in zip(self._data, cycle(self._colors)):
                 if name == 'epoch':
                     continue
                 yvals = self._data[name]
+                if self._plotted is not None and name not in self._plotted:
+                    continue
                 if min(yvals) < 0 or max(yvals) > 20:
                     continue
 
                 max_data = max(
-                    max_data, max([y for x, y in zip(xx, yvals) if x >= cutoff], default=1)
+                    max_data,
+                    max(
+                        [y for x, y in zip(xx, yvals) if x >= cutoff and y <= ymax * 1.1], default=1
+                    ),
                 )
-                self.plt.plot(xx, yvals, color=color, label=name)
 
-            self.plt.ylim(0, max_data * 1.1)
+                self.plt.plot(xx, [min(ymax * 1.09, y) for y in yvals], color=color, label=name)
+                if self._plotted is None:
+                    plotted.append(name)
+
+            self.plt.ylim(0, ymax * 1.1)
+            if self._plotted is None:
+                self._plotted = plotted
 
         self.refresh()
 

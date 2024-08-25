@@ -311,12 +311,27 @@ class TrainingRun:
             # Compute metrics on the test set after each training epoch
             self.test_state = self.eval_state.replace(metrics=Metrics())
             for _i, test_batch in zip(range(self.steps_in_test_epoch), self.test_dl):
-                test_preds = jax.vmap(
-                    lambda p, b: self.test_state.apply_fn(
-                        p, b, ctx=Context(training=False), rngs=self.rng
-                    ),
-                    in_axes=(None, 0),
-                )(self.test_state.params, test_batch)
+                if self.config.task == 'e_form':
+                    test_preds = jax.vmap(
+                        lambda p, b: self.config.train.loss.efs_loss(
+                            b,
+                            EFSWrapper()(
+                                self.test_state.apply_fn,
+                                p,
+                                b,
+                                ctx=Context(training=False),
+                                rngs=self.rng,
+                            ),
+                        ),
+                        in_axes=(None, 0),
+                    )(self.test_state.params, test_batch)
+                else:
+                    test_preds = jax.vmap(
+                        lambda p, b: self.test_state.apply_fn(
+                            p, b, ctx=Context(training=False), rngs=self.rng
+                        ),
+                        in_axes=(None, 0),
+                    )(self.test_state.params, test_batch)
 
                 self.test_state = self.compute_metrics(
                     task=self.config.task,

@@ -1,6 +1,9 @@
 # profile data
 *.nsys-rep
 
+# secrets file
+secrets.sh
+
 # Data files
 precomputed/*
 models/*

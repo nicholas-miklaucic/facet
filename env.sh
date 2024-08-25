@@ -21,3 +21,5 @@ export XLA_FLAGS="
 "
 export JAX_TRACEBACK_IN_LOCATIONS_LIMIT=20
 export XLA_PYTHON_CLIENT_MEM_FRACTION=0.9
+source secrets.sh
+export NEPTUNE_PROJECT="facet"
