@@ -17,7 +17,7 @@ from pyrallis.fields import field
 
 from cdv import layers
 from cdv.layers import Identity, LazyInMLP
-from cdv.mace import MaceModel
+from cdv.mace.mace import MaceModel
 from cdv.regression import EFSLoss
 from cdv.vae import VAE, Decoder, Encoder, LatticeVAE, PropertyPredictor
 

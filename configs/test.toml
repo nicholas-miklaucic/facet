@@ -1,7 +1,7 @@
 batch_size = 64
 stack_size = 1
 do_profile = false
-num_epochs = 5
+num_epochs = 10
 regressor = "mace"
 task = "e_form"
 
@@ -10,7 +10,7 @@ shuffle_seed = 1618
 train_split = 30
 test_split = 3
 valid_split = 3
-batches_per_group = 300
+batches_per_group = 100
 
 [cli]
 verbosity = "info"
@@ -31,7 +31,7 @@ exp_name = "refactor"
 [train]
 lr_schedule_kind = "cosine"
 start_lr_frac = 0.1
-base_lr = 4e-3
+base_lr = 1e-3
 end_lr_frac = 0.04
 weight_decay = 1e-8
 beta_1 = 0.9
@@ -42,11 +42,11 @@ schedule_free = false
 prodigy = false
 
 [mace]
-max_ell = 3
+max_ell = 2
 # num_interactions = 5
 num_interactions = 2
 hidden_irreps = "128x0e"
-correlation = 3
+correlation = 2
 readout_mlp_irreps = "128x0e"
 
 [train.loss.reg_loss]
@@ -55,4 +55,5 @@ use_rmse = false
 
 [train.loss]
 stress_weight = 0.01
-force_weight = 0.1
+force_weight = 0.01
+energy_weight = 1

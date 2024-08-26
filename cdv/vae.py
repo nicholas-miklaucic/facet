@@ -13,7 +13,7 @@ from jaxtyping import Float, Array
 import jax.numpy as jnp
 import jax.random as jr
 
-from cdv.mace import MaceModel
+from cdv.mace.mace import MaceModel
 
 
 class LatentOutput(struct.PyTreeNode):

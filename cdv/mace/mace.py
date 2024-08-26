@@ -16,11 +16,13 @@ import json
 from eins import EinsOp
 
 from cdv.databatch import CrystalGraphs
-from cdv.e3_layers import Linear, LinearReadoutBlock, NonlinearReadoutBlock
+from cdv.mace.e3_layers import Linear, LinearReadoutBlock, NonlinearReadoutBlock
 from cdv.layers import SegmentReduction, SegmentReductionKind
 from cdv.layers import Context, E3NormNorm, LazyInMLP, E3Irreps, E3IrrepsArray, edge_vecs
+from cdv.mace.edge_embedding import BesselBasis, ExpCutoff, RadialEmbeddingBlock
+from cdv.mace.node_embedding import SevenNetEmbedding
 from cdv.utils import debug_stat, debug_structure
-from cdv.self_connection import EquivariantProductBasisBlock, LinearSelfConnection
+from cdv.mace.self_connection import EquivariantProductBasisBlock, LinearSelfConnection
 
 
 def safe_norm(x: jnp.ndarray, axis: int | None = None, keepdims=False) -> jnp.ndarray:
@@ -56,33 +58,6 @@ class SpeciesWiseRescale(nn.Module):
 
     def __call__(self, energies, node_species):
         return energies + self.values[node_species]
-
-
-class RadialEmbeddingBlock(nn.Module):
-    r_max: float
-    basis_functions: Callable[[jnp.ndarray], jnp.ndarray]
-    envelope_function: Callable[[jnp.ndarray], jnp.ndarray]
-    avg_r_min: Optional[float] = None
-
-    def __call__(self, edge_lengths: jnp.ndarray) -> E3IrrepsArray:
-        """batch -> batch num_basis"""
-
-        def func(lengths):
-            basis = self.basis_functions(lengths, self.r_max)  # [n_nodes,k, num_basis]
-            cutoff = self.envelope_function(lengths, self.r_max)  # [n_nodes, k]
-            return basis * cutoff[..., None]  # [n_edges, num_basis]
-
-        with jax.ensure_compile_time_eval():
-            if self.avg_r_min is None:
-                factor = 1.0
-            else:
-                samples = jnp.linspace(self.avg_r_min, self.r_max, 1000, dtype=jnp.float64)
-                factor = jnp.mean(func(samples) ** 2).item() ** -0.5
-
-        embedding = factor * jnp.where(
-            (edge_lengths == 0.0)[..., None], 0.0, func(edge_lengths)
-        )  # [n_edges, num_basis]
-        return E3IrrepsArray(f'{embedding.shape[-1]}x0e', jnp.array(embedding))
 
 
 class MessagePassingConvolution(nn.Module):
@@ -252,9 +227,9 @@ class MACELayer(nn.Module):
         #     node_feats = profile(f'{self.name}: skip_tp_first', node_feats, node_mask[:, None])
 
         irreps_out = self.num_features * hidden_irreps
-        if False:
+        if True:
             self_interact_block = EquivariantProductBasisBlock(
-                target_irreps=self.num_features * hidden_irreps,
+                irreps_out=self.num_features * hidden_irreps,
                 correlation=self.correlation,
                 num_species=self.num_species,
                 symmetric_tensor_product_basis=self.symmetric_tensor_product_basis,
@@ -333,15 +308,11 @@ class MACE(nn.Module):
 
         # Embeddings
         self.node_embedding = self.node_embedding_type(
-            self.num_species,
-            self.elem_indices,
             self.num_features_calc * self.hidden_irreps_calc,
         )
         self.radial_embedding = RadialEmbeddingBlock(
-            r_max=self.r_max,
-            avg_r_min=self.avg_r_min,
-            basis_functions=self.radial_basis,
-            envelope_function=self.radial_envelope,
+            basis=BesselBasis(r_max=self.r_max, num_basis=10),
+            envelope=ExpCutoff(r_max=self.r_max, c=0.1, cutoff_start=0.9),
         )
 
         layers = []
@@ -379,7 +350,9 @@ class MACE(nn.Module):
 
         self.layers = layers
 
-        self.global_proj_mlp = self.global_proj_templ.copy(out_dim=self.node_embedding.out_dim)
+        self.global_proj_mlp = self.global_proj_templ.copy(
+            out_dim=E3Irreps(self.node_embedding.irreps_out).dim
+        )
 
     def __call__(
         self,
@@ -403,7 +376,7 @@ class MACE(nn.Module):
             node_mask = jnp.ones(node_species.shape[0], dtype=jnp.bool_)
 
         # Embeddings
-        node_feats = self.node_embedding(node_species).astype(
+        node_feats = self.node_embedding(node_species, ctx=ctx).astype(
             vectors.dtype
         )  # [n_nodes, feature * irreps]
         species_embs = node_feats
@@ -419,7 +392,7 @@ class MACE(nn.Module):
         if not (hasattr(vectors, 'irreps') and hasattr(vectors, 'array')):
             vectors = E3IrrepsArray('1o', vectors)
 
-        radial_embedding = self.radial_embedding(safe_norm(vectors.array, axis=-1))
+        radial_embedding = self.radial_embedding(safe_norm(vectors.array, axis=-1), ctx=ctx)
         # debug_structure(radial_embedding=radial_embedding)
 
         # Interactions
@@ -491,6 +464,13 @@ class MaceModel(nn.Module):
                 value_at_origin=self.radial_envelope_intercept,
             )
 
+        if False:
+            node_embedding_type = lambda x: LinearNodeEmbedding(
+                irreps_out=x, num_species=self.num_species, element_indices=self.elem_indices
+            )
+        else:
+            node_embedding_type = SevenNetEmbedding
+
         self.mace = MACE(
             output_irreps=self.output_irreps,
             r_max=self.max_r,
@@ -507,7 +487,7 @@ class MaceModel(nn.Module):
             symmetric_tensor_product_basis=self.symmetric_tensor_product_basis,
             off_diagonal=self.off_diagonal,
             interaction_irreps=self.interaction_irreps,
-            node_embedding_type=LinearNodeEmbedding,
+            node_embedding_type=node_embedding_type,
             radial_basis=bessel_basis,
             radial_envelope=soft_envelope,
             share_species_embed=self.share_species_embed,

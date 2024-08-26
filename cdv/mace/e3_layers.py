@@ -12,10 +12,18 @@ def Linear(*args, **kwargs):
     return e3nn.flax.Linear(*args, **kwargs)
 
 
-class IrrepsAdapter(nn.Module):
-    """Generic module that can convert between irreps."""
+class IrrepsModule(nn.Module):
+    """Module that outputs irreps."""
 
     irreps_out: E3Irreps
+
+    @property
+    def ir_out(self) -> E3Irreps:
+        return E3Irreps(self.irreps_out)
+
+
+class IrrepsAdapter(IrrepsModule):
+    """Generic module that can convert between irreps."""
 
 
 class LinearReadoutBlock(IrrepsAdapter):
@@ -25,7 +33,7 @@ class LinearReadoutBlock(IrrepsAdapter):
     def __call__(self, x: E3IrrepsArray, ctx: Context) -> E3IrrepsArray:
         """batch irreps -> batch irreps_out"""
         # x = [n_nodes, irreps]
-        return e3nn.flax.Linear(self.irreps_out)(x)
+        return e3nn.flax.Linear(self.ir_out)(x)
 
 
 class NonlinearReadoutBlock(IrrepsAdapter):
@@ -40,7 +48,6 @@ class NonlinearReadoutBlock(IrrepsAdapter):
         """batch irreps -> batch irreps_out"""
         # x = [n_nodes, irreps]
         hidden_irreps = E3Irreps(self.hidden_irreps)
-        output_irreps = E3Irreps(self.irreps_out)
         num_vectors = hidden_irreps.filter(
             drop=['0e', '0o']
         ).num_irreps  # Multiplicity of (l > 0) irreps
@@ -51,6 +58,6 @@ class NonlinearReadoutBlock(IrrepsAdapter):
         # print((hidden_irreps + E3Irreps(f'{num_vectors}x0e')).simplify())
         # print(x.irreps)
         x = e3nn.gate(x, even_act=self.activation, even_gate_act=self.gate)
-        return Linear(output_irreps)(x)
+        return Linear(self.ir_out)(x)
 
     # [n_nodes, output_irreps]

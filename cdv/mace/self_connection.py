@@ -1,23 +1,15 @@
 """Self-connection blocks for MACE."""
 
-from collections.abc import Sequence
-import functools
-import math
-from typing import Callable, Optional
 from typing import Set, Union
 from flax import linen as nn
 import e3nn_jax as e3nn
 import jax
 import jax.numpy as jnp
-from jaxtyping import Float, Array, Int
+from jaxtyping import Float, Array
 
-from eins import EinsOp
 
-from cdv.databatch import CrystalGraphs
-from cdv.layers import SegmentReduction, SegmentReductionKind
-from cdv.layers import Context, E3NormNorm, LazyInMLP, E3Irreps, E3IrrepsArray, edge_vecs
-from cdv.utils import debug_stat
-from cdv.e3_layers import Linear
+from cdv.layers import Context, LazyInMLP, E3Irreps, E3IrrepsArray
+from cdv.mace.e3_layers import IrrepsModule, Linear
 
 
 def safe_norm(x: jnp.ndarray, axis: int = None, keepdims=False) -> jnp.ndarray:
@@ -34,18 +26,16 @@ reduced_tensor_product_basis = e3nn.reduced_tensor_product_basis
 # e3nn.reduced_symmetric_tensor_product_basis
 
 
-class SelfConnectionBlock(nn.Module):
+class SelfConnectionBlock(IrrepsModule):
     """Block for node updates, combining species and environment information."""
-
-    irreps_out: E3Irreps
 
     @nn.compact
     def __call__(
         self,
         node_feats: E3IrrepsArray,  # [n_nodes, feature * irreps]
         node_specie: jnp.ndarray,  # [n_nodes, ] int
+        species_embed: Float[Array, 'num_species embed_dim'],
         ctx: Context,
-        species_embed: Float[Array, 'num_species embed_dim'] | None = None,
     ):
         raise NotImplementedError
 
@@ -62,8 +52,8 @@ class SymmetricContraction(nn.Module):
         self,
         input: E3IrrepsArray,  # n_nodes, feats, irreps
         index: jnp.ndarray,
+        species_embed: Float[Array, 'num_species embed_dim'],
         ctx: Context,
-        species_embed: Float[Array, 'num_species embed_dim'] | None = None,
     ) -> E3IrrepsArray:
         if isinstance(self.keep_irrep_out, str):
             keep_irrep_out = E3Irreps(self.keep_irrep_out)
@@ -230,12 +220,12 @@ class EquivariantProductBasisBlock(SelfConnectionBlock):
         self,
         node_feats: E3IrrepsArray,  # [n_nodes, feature * irreps]
         node_specie: jnp.ndarray,  # [n_nodes, ] int
+        species_embed: Float[Array, 'num_species embed_dim'],
         ctx: Context,
-        species_embed: Float[Array, 'num_species embed_dim'] | None = None,
     ) -> E3IrrepsArray:
         node_feats = node_feats.mul_to_axis().remove_nones()
         node_feats = SymmetricContraction(
-            keep_irrep_out={ir for _, ir in self.irreps_out},
+            keep_irrep_out={ir for _, ir in self.ir_out},
             correlation=self.correlation,
             num_species=self.num_species,
             symmetric_tensor_product_basis=self.symmetric_tensor_product_basis,
@@ -253,8 +243,8 @@ class LinearSelfConnection(SelfConnectionBlock):
         self,
         node_feats: E3IrrepsArray,  # [n_nodes, feature * irreps]
         node_specie: jnp.ndarray,  # [n_nodes, ] int
+        species_embed: Float[Array, 'num_species embed_dim'],
         ctx: Context,
-        species_embed: Float[Array, 'num_species embed_dim'] | None = None,
     ):
         linear_out = Linear(self.irreps_out)
         return linear_out(node_feats)
