@@ -17,6 +17,13 @@ class EFSOutput(PyTreeNode):
     force: Float[Array, ' nodes 3']
     stress: Float[Array, ' graphs 3 3']
 
+    def rotate(self, rots, cg) -> 'EFSOutput':
+        return EFSOutput(
+            energy=self.energy,  # scalar
+            force=jnp.einsum('ij,ijk->ik', self.force, rots[cg.nodes.graph_i]),
+            stress=jnp.einsum('ijk,ikl->ijl', self.stress, rots),
+        )
+
 
 class EFSWrapper(PyTreeNode):
     def __call__(
@@ -41,13 +48,14 @@ class EFSWrapper(PyTreeNode):
         )
 
         # https://github.com/MDIL-SNU/SevenNet/blob/afb56e10b6a27190f7c3ce25cbf666cf9175608e/sevenn/nn/force_output.py#L72
+        # https://github.com/ACEsuit/mace/blob/575af0171369e2c19e04b115140b9901f83eb00c/mace/modules/utils.py#L60
         force = -fgrad
 
         volume = jax.vmap(
-            lambda l: jnp.linalg.det(l + jnp.eye(3) * 1e-8),
-        )(cg.graph_data.lat.reshape(-1, 3, 3)).reshape(*cg.graph_data.lat.shape[:-2])
+            jnp.linalg.det,
+        )(cg.graph_data.lat.reshape(-1, 3, 3)).reshape(*cg.graph_data.lat.shape[:-2], 1, 1)
 
-        stress = -sgrad / volume[..., None, None]
+        stress = -sgrad / jnp.where(volume == 0, jnp.ones_like(volume), volume)
 
         return EFSOutput(energy=energy, force=force, stress=stress)
 

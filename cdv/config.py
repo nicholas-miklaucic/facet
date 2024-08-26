@@ -8,6 +8,7 @@ from typing import Any, Callable, Mapping, Optional
 import e3nn_jax
 import jax
 import jax.numpy as jnp
+import numpy as np
 import optax
 import pyrallis
 from flax import linen as nn
@@ -108,6 +109,20 @@ class DataConfig:
     def num_species(self) -> int:
         """Number of unique elements."""
         return len(self.metadata['elements'])
+
+    def avg_num_neighbors(self, cutoff: float):
+        """Estimates average number of neighbors, given a certain cutoff."""
+        dists = self.metadata['distances']
+        n_nodes = self.metadata['n_nodes']
+        return sum([c for b, c in zip(dists['bins'], dists['counts']) if b < cutoff]) / n_nodes
+
+    def avg_dist(self, cutoff: float):
+        """Estimates average distance, given a certain cutoff."""
+        dists = self.metadata['distances']
+
+        bins = np.array(dists['bins'])
+        counts = np.array(dists['counts'])
+        return np.average(bins[bins < cutoff], weights=counts[bins < cutoff])
 
 
 class LoggingLevel(Enum):
@@ -316,8 +331,6 @@ class MACEConfig:
         elem_indices: Sequence[int],
         output_graph_irreps: str,
         output_node_irreps: str | None = None,
-        scalar_mean: float = 0.0,
-        scalar_std: float = 1.0,
     ) -> MaceModel:
         return MaceModel(
             max_ell=self.max_ell,
@@ -333,8 +346,6 @@ class MACEConfig:
             correlation=self.correlation,
             interaction_reduction=self.interaction_reduction,
             node_reduction=self.node_reduction,
-            scalar_mean=scalar_mean,
-            scalar_std=scalar_std,
         )
 
 
@@ -345,7 +356,7 @@ class LossConfig:
     reg_loss: RegressionLossConfig = field(default_factory=RegressionLossConfig)
     energy_weight: float = 1
     force_weight: float = 0.1
-    stress_weight: float = 0.01
+    stress_weight: float = 0.1
 
     def regression_loss(self, preds, targets, mask):
         return self.reg_loss.regression_loss(preds, targets, mask)
@@ -528,8 +539,6 @@ class MainConfig:
                 self.data.num_species,
                 self.data.metadata['element_indices'],
                 '0e',
-                scalar_mean=self.data.metadata['e_form']['mean'],
-                scalar_std=self.data.metadata['e_form']['mean'],
             )
         else:
             raise ValueError(f'{self.regressor} not supported')

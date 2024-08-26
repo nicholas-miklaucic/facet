@@ -7,10 +7,10 @@ task = "e_form"
 
 [data]
 shuffle_seed = 1618
-train_split = 27
+train_split = 30
 test_split = 3
-valid_split = 6
-batches_per_group = 300
+valid_split = 3
+batches_per_group = 30
 
 [cli]
 verbosity = "info"
@@ -25,7 +25,7 @@ gpu_ids = [0, 1, 2]
 log_dir = "logs"
 logs_per_epoch = 16
 epochs_per_ckpt = 5
-epochs_per_valid = 2
+epochs_per_valid = 1
 exp_name = "refactor"
 
 [train]
@@ -45,9 +45,9 @@ prodigy = false
 max_ell = 2
 # num_interactions = 5
 num_interactions = 2
-hidden_irreps = "64x0e + 32x1o"
+hidden_irreps = "128x0e + 32x1o"
 correlation = 3
-readout_mlp_irreps = "64x0e"
+readout_mlp_irreps = "128x0e"
 
 [train.loss.reg_loss]
 loss_delta = 0.015625

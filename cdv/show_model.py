@@ -20,6 +20,7 @@ def to_dot_graph(x):
 
 @pyrallis.argparsing.wrap()
 def show_model(config: MainConfig, make_hlo_dot=False, do_profile=False):
+    # print(config.data.avg_dist(6), config.data.avg_num_neighbors(6))
     kwargs = dict(ctx=Context(training=True))
     num_batches, dl = dataloader(config, split='train', infinite=True)
     for i, b in zip(range(2), dl):
@@ -70,7 +71,8 @@ def show_model(config: MainConfig, make_hlo_dot=False, do_profile=False):
     rngs.pop('params')
     flax_summary(mod, rngs=rngs, cg=b1, **kwargs)
 
-    rot_batch = jax.vmap(lambda x: x.rotate(123)[0])(batch)
+    rot_batch, rots = jax.vmap(lambda x: x.rotate(123))(batch)
+    debug_structure(rots=rots)
 
     if True:
         rot_out = apply_fn(params, rot_batch)
@@ -78,7 +80,13 @@ def show_model(config: MainConfig, make_hlo_dot=False, do_profile=False):
         with nn.intercept_methods(intercept_stat):
             rot_out = base_apply_fn(params, rot_batch)
 
-    debug_stat(equiv_error=jax.tree.map(lambda x, y: jnp.abs(x - y), rot_out, out))
+    debug_stat(
+        equiv_error=jax.tree.map(
+            lambda x, y: jnp.abs(x - y),
+            rot_out,
+            jax.vmap(lambda o, r, c: o.rotate(r, c))(out, rots, batch),
+        )
+    )
 
     if do_profile:
         with jax.profiler.trace('/tmp/jax-trace', create_perfetto_trace=True):

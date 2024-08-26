@@ -33,6 +33,7 @@ yaml.SafeDumper.add_representer(E3IrrepsArray, represent_irrep_array)
 
 
 def edge_vecs(cg):
+    """CG -> nodes k xyz"""
     # print(cg)
     send_pos = cg.nodes.cart[:, None, :]  # nodes 1 3
     offsets = EinsOp('nodes abc xyz, nodes k abc -> nodes k xyz')(

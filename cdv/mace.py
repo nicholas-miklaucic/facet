@@ -12,7 +12,7 @@ import e3nn_jax as e3nn
 import jax
 import jax.numpy as jnp
 from jaxtyping import Float, Array, Int
-
+import json
 from eins import EinsOp
 
 from cdv.databatch import CrystalGraphs
@@ -41,6 +41,21 @@ class LinearNodeEmbedding(nn.Module):
 
     def __call__(self, node_species: Int[Array, ' batch']) -> E3IrrepsArray:
         return E3IrrepsArray(self.irreps_out_calc, self.embed(self.element_indices[node_species]))
+
+
+class SpeciesWiseRescale(nn.Module):
+    def setup(self):
+        with open('data/sevennet_stats.json', 'r') as stats_file:
+            stats = json.load(stats_file)
+
+        with jax.ensure_compile_time_eval():
+            self.values = jnp.zeros((max(stats['atomic_numbers']) + 1,), dtype=jnp.float32)
+            self.values = self.values.at[jnp.array(stats['atomic_numbers'], dtype=jnp.uint32)].set(
+                jnp.array(stats['atomic_energies'])
+            )
+
+    def __call__(self, energies, node_species):
+        return energies + self.values[node_species]
 
 
 class RadialEmbeddingBlock(nn.Module):
@@ -75,7 +90,6 @@ class MessagePassingConvolution(nn.Module):
     target_irreps: E3Irreps
     max_ell: int
     activation: Callable
-    mix: str = 'mix'
 
     @nn.compact
     def __call__(
@@ -110,66 +124,23 @@ class MessagePassingConvolution(nn.Module):
             axis=-1,
         ).regroup()  # [n_nodes, irreps]
 
-        if self.mix == 'mix':
-            radial = LazyInMLP(
-                # np.rint(np.linspace(radial_embedding.shape[-1], messages.irreps.num_irreps, 3)[1:-1])
-                # .astype(int)
-                # .tolist(),
-                [],
-                out_dim=messages.irreps.num_irreps,
-                normalization='none',
-                name='radial_mix',
-            )(radial_embedding, ctx)  # [n_nodes, k, num_irreps]
+        radial = LazyInMLP(
+            [],
+            out_dim=messages.irreps.num_irreps,
+            normalization='none',
+            name='radial_mix',
+        )(radial_embedding, ctx)  # [n_nodes, k, num_irreps]
 
-            # debug_structure(messages=messages, mix=radial, rad=radial_embedding.array)
-            # debug_stat(messages=messages.array, mix=mix.array, rad=radial_embedding.array)
-            # radial = nn.sigmoid(radial.array)
-            messages = messages * radial  # [n_nodes, k, irreps]
+        # debug_structure(messages=messages, mix=radial, rad=radial_embedding.array)
+        # debug_stat(messages=messages.array, mix=mix.array, rad=radial_embedding.array)
+        # radial = nn.sigmoid(radial.array)
+        messages = messages * radial  # [n_nodes, k, irreps]
 
-            # debug_stat(messages=messages, radial=radial)
+        # debug_stat(messages=messages, radial=radial)
 
-            zeros = E3IrrepsArray.zeros(messages.irreps, node_feats.shape[:1], messages.dtype)
-            # TODO flip this perhaps?
-            node_feats = zeros.at[receivers].add(messages)  # [n_nodes, irreps]
-            # node_feats = node_feats / jnp.sqrt(self.avg_num_neighbors)
-        elif self.mix == 'mlpa':
-            radial = LazyInMLP(
-                # np.rint(np.linspace(radial_embedding.shape[-1], messages.irreps.num_irreps, 3)[1:-1])
-                # .astype(int)
-                # .tolist(),
-                [32],
-                out_dim=64,
-                inner_act=self.activation,
-                normalization='none',
-                name='radial_msg',
-            )(radial_embedding.array, ctx)  # [n_edges, 64]
-
-            x = jnp.concat(
-                [messages.filter('0e').array, radial], axis=-1
-            )  # [n_edges, num_scalars + 64]
-
-            z = LazyInMLP(
-                # np.rint(np.linspace(x.shape[-1], messages.irreps.num_irreps, 3)[1:-1])
-                # .astype(int)
-                # .tolist(),
-                [],
-                out_dim=messages.irreps.num_irreps,
-                inner_act=self.activation,
-                normalization='none',
-                name='msg_attention',
-            )(x, ctx)
-
-            a = jnp.exp(z)  # [n_edges, num_irreps]
-
-            normalization = jnp.zeros((node_feats.shape[0], a.shape[-1]), jnp.float32)
-            normalization = normalization.at[receivers].add(a)  # [n_nodes, num_irreps]
-
-            att = a / (normalization[receivers] + 1e-6)
-
-            # debug_stat(att=att, a=a, norm=normalization)
-
-            zeros = E3IrrepsArray.zeros(messages.irreps, node_feats.shape[:1], messages.dtype)
-            node_feats = zeros.at[receivers].add(messages * att)  # [n_nodes, irreps]
+        zeros = E3IrrepsArray.zeros(messages.irreps, node_feats.shape[:1], messages.dtype)
+        # TODO flip this perhaps?
+        node_feats = zeros.at[receivers].add(messages)  # [n_nodes, irreps]
 
         return node_feats
 
@@ -480,9 +451,6 @@ class MaceModel(nn.Module):
     hidden_irreps: str  # 256x0e or 128x0e + 128x1o
     readout_mlp_irreps: str  # Hidden irreps of the MLP in last readout, default 16x0e
 
-    scalar_mean: float = 0.0
-    scalar_std: float = 1.0
-
     num_interactions: int = 2  # Number of interactions (layers), default 2
 
     # How to combine the outputs of different interaction blocks.
@@ -492,12 +460,12 @@ class MaceModel(nn.Module):
     node_reduction: SegmentReductionKind = 'mean'
 
     num_radial_embeds: int = 8
-    max_r: float = 5.0
-    avg_r_min: float = 1.5
+    max_r: float = 6.0
+    avg_r_min: float = 0.75
     radial_envelope_scale: float = 2
     radial_envelope_intercept: float = 1.2
 
-    avg_num_neighbors: float = 20.0
+    avg_num_neighbors: float = 15.0
 
     max_ell: int = 3  # Max spherical harmonic degree, default 3
     correlation: int = 2  # Correlation order at each layer (~ node_features^correlation), default 3
@@ -551,6 +519,8 @@ class MaceModel(nn.Module):
             for _chunk in E3Irreps(self.output_graph_irreps).slices()
         ]
 
+        self.rescale = SpeciesWiseRescale()
+
     def __call__(
         self,
         cg: CrystalGraphs,
@@ -584,8 +554,9 @@ class MaceModel(nn.Module):
 
             if i < len(self.node_reduction_mods):
                 # part of the global outputs
+                scaled_outs = self.rescale(filtered_outs, cg.nodes.species[..., None, None])
                 return self.node_reduction_mods[i](
-                    filtered_outs, cg.nodes.graph_i, cg.n_total_graphs, ctx
+                    scaled_outs, cg.nodes.graph_i, cg.n_total_graphs, ctx
                 )
             else:
                 # global output
@@ -614,8 +585,8 @@ class MaceModel(nn.Module):
             )
 
         if out_ir.is_scalar() and out_ir.num_irreps == 1:
-            # special case for regression
-            return graph_arr.array * self.scalar_std + self.scalar_mean
+            # special case for graph regression
+            return graph_arr.array
         else:
             return graph_arr, node_arr
 
