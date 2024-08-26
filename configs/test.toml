@@ -1,4 +1,4 @@
-batch_size = 128
+batch_size = 64
 stack_size = 1
 do_profile = false
 num_epochs = 5
@@ -10,7 +10,7 @@ shuffle_seed = 1618
 train_split = 30
 test_split = 3
 valid_split = 3
-batches_per_group = 30
+batches_per_group = 300
 
 [cli]
 verbosity = "info"
@@ -37,18 +37,22 @@ weight_decay = 1e-8
 beta_1 = 0.9
 beta_2 = 0.999
 nestorov = true
-max_grad_norm = 1.0
+max_grad_norm = 3.0
 schedule_free = false
 prodigy = false
 
 [mace]
-max_ell = 2
+max_ell = 3
 # num_interactions = 5
 num_interactions = 2
-hidden_irreps = "128x0e + 32x1o"
+hidden_irreps = "128x0e"
 correlation = 3
 readout_mlp_irreps = "128x0e"
 
 [train.loss.reg_loss]
 loss_delta = 0.015625
 use_rmse = false
+
+[train.loss]
+stress_weight = 0.01
+force_weight = 0.1

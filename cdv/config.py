@@ -321,7 +321,7 @@ class MACEConfig:
     # hidden_irreps = '16x0e + 16x1o'
     correlation: int = 3  # 4 is better but 5x slower
     readout_mlp_irreps: str = '16x0e'
-    interaction_reduction: str = 'last'
+    interaction_reduction: str = 'mean'
     node_reduction: str = 'mean'
     gate: str = 'silu'
 
@@ -403,7 +403,7 @@ class TrainingConfig:
     nestorov: bool = True
 
     # Gradient norm clipping.
-    max_grad_norm: float = 1.0
+    max_grad_norm: float = 3.0
 
     # Schedule-free.
     schedule_free: bool = False

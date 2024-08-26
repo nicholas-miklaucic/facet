@@ -1,22 +1,13 @@
 # CDV
 Working repository for diffusion and prediction models using MACE.
 
-## Immediate To-Do
-- Get forces/stress working
-- Normalize those outputs properly, store in dataset metadata
-- Add per-layer irreps
-
-- Model FLOPS/params
-- Per-layer irreps
-- Species-wise rescaling
-- Correct avg_num_neighbors
-
-Options:
-- Mixing type
-- Self-interaction type
-- Per-layer irreps
-
-
+## To Do
+ - Per-layer irreps
+ - Refactor MACE model code
+ - Figure out stress or skip?
+ - Get basic Neptune logging working
+    - Include show_model.py code that gets logged to HTML
+- Only do tensor products we actually use!
 
 
 

@@ -55,7 +55,10 @@ class EFSWrapper(PyTreeNode):
             jnp.linalg.det,
         )(cg.graph_data.lat.reshape(-1, 3, 3)).reshape(*cg.graph_data.lat.shape[:-2], 1, 1)
 
-        stress = -sgrad / jnp.where(volume == 0, jnp.ones_like(volume), volume)
+        stress = jnp.where(
+            volume == 0, -sgrad, -sgrad / jnp.where(volume == 0, jnp.ones_like(volume), volume)
+        )
+        # stress = -sgrad * 10
 
         return EFSOutput(energy=energy, force=force, stress=stress)
 
