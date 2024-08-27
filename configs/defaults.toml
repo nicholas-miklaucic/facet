@@ -43,18 +43,32 @@ weight_decay = 0.03
 beta_1 = 0.9
 beta_2 = 0.999
 nestorov = true
-max_grad_norm = 1.0
+max_grad_norm = 3.0
 schedule_free = false
 prodigy = false
 
 [mace]
+num_basis = 8
+r_max = 6
+avg_num_neighbors = 14
 max_ell = 3
-num_interactions = 2
-hidden_irreps = "256x0e + 256x1o"
-correlation = 3
-readout_mlp_irreps = "16x0e"
-interaction_reduction = "mean"
-node_reduction = "mean"
+hidden_irreps = [ "128x0e + 64x1o + 32x2e", "128x0e + 64x1o + 32x2e",]
+node_out_dim = 64
+interaction_reduction = "last"
+share_species_embed = true
+
+[train.loss]
+energy_weight = 1
+force_weight = 0.1
+stress_weight = 0.1
+
+[mace.head]
+inner_dims = []
+activation = "swish"
+final_activation = "Identity"
+dropout = 0.0
+residual = false
+num_heads = 1
 
 [train.loss.reg_loss]
 loss_delta = 0.015625

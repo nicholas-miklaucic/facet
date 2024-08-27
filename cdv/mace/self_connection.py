@@ -10,6 +10,7 @@ from jaxtyping import Float, Array
 
 from cdv.layers import Context, LazyInMLP, E3Irreps, E3IrrepsArray
 from cdv.mace.e3_layers import IrrepsModule, Linear
+from cdv.utils import debug_structure
 
 
 def safe_norm(x: jnp.ndarray, axis: int = None, keepdims=False) -> jnp.ndarray:
@@ -248,3 +249,28 @@ class LinearSelfConnection(SelfConnectionBlock):
     ):
         linear_out = Linear(self.irreps_out)
         return linear_out(node_feats)
+
+
+class MLPSelfGate(SelfConnectionBlock):
+    """
+    Calculates all potential scalars from the tensor square,
+    applies an MLP, and then computes the tensor product.
+    """
+
+    @nn.compact
+    def __call__(
+        self,
+        node_feats: E3IrrepsArray,  # [n_nodes, feature * irreps]
+        node_specie: jnp.ndarray,  # [n_nodes, ] int
+        species_embed: Float[Array, 'num_species embed_dim'],
+        ctx: Context,
+    ):
+        scalars = e3nn.tensor_product(node_feats, node_feats, filter_ir_out=['0e'])
+        x = jnp.concat((scalars.array, species_embed), axis=-1)
+        out_dim = node_feats.filter(drop='0e').irreps.num_irreps
+        mlp = LazyInMLP(inner_dims=[out_dim // 2], out_dim=out_dim, name='self_gate')
+        y = E3IrrepsArray(f'{out_dim}x0e', mlp(x, ctx=ctx))
+        z = e3nn.concatenate((node_feats, y))
+        z = e3nn.gate(z)
+
+        return Linear(self.ir_out)(z)

@@ -11,6 +11,7 @@ from types import MappingProxyType
 from typing import Any, Callable
 
 from e3nn_jax import IrrepsArray
+import e3nn_jax
 import flax.linen as nn
 import humanize
 import jax

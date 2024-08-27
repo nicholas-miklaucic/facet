@@ -39,6 +39,21 @@ class RadialEmbeddingBlock(nn.Module):
         return E3IrrepsArray(f'{embedding.shape[-1]}x0e', embedding)
 
 
+class GaussBasis(RadialBasis):
+    """Uses equispaced Gaussian RBFs, as in coGN."""
+
+    r_max: float
+    sd: float = 1.0
+
+    def setup(self):
+        self.locs = jnp.linspace(0, self.r_max, self.num_basis)
+
+    def __call__(self, d: Float[Array, ' *batch'], ctx: Context) -> Float[Array, '*batch emb']:
+        z = d[..., None] - self.locs
+        y = jnp.exp(-(z**2) / (2 * self.sd**2))
+        return y
+
+
 class BesselBasis(RadialBasis):
     """Bessel radial basis functions."""
 
@@ -47,15 +62,13 @@ class BesselBasis(RadialBasis):
     r_max: float
 
     def setup(self):
-        self.bessel_weights = (
-            jnp.pi / self.r_max * jnp.linspace(1.0, self.num_basis, self.num_basis)
-        )
+        self.bessel_weights = self.r_max * jnp.linspace(1.0, self.num_basis, self.num_basis)
 
         self.prefactor = jnp.sqrt(2.0 / self.r_max)
 
     def __call__(self, edge_lengths: Float[Array, '*batch'], ctx: Context) -> E3IrrepsArray:
-        numerator = jnp.sin(self.bessel_weights * edge_lengths[..., None])
-        return jnp.tanh(self.prefactor * (numerator / (edge_lengths[..., None] + 1e-4)))
+        numerator = jnp.sinc(self.bessel_weights * edge_lengths[..., None])
+        return self.prefactor * (numerator / (edge_lengths[..., None] + 1e-4))
 
 
 class PolynomialCutoff(Envelope):

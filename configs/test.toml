@@ -1,11 +1,13 @@
-batch_size = 64
+batch_size = 32
 stack_size = 1
 do_profile = false
-num_epochs = 10
+num_epochs = 5
+display = "dashboard"
 regressor = "mace"
 task = "e_form"
 
 [data]
+dataset_name = "mptrj"
 shuffle_seed = 1618
 train_split = 30
 test_split = 3
@@ -23,15 +25,14 @@ gpu_ids = [0, 1, 2]
 
 [log]
 log_dir = "logs"
-logs_per_epoch = 16
-epochs_per_ckpt = 5
-epochs_per_valid = 1
-exp_name = "refactor"
+logs_per_epoch = 8
+epochs_per_ckpt = 2
+epochs_per_valid = 2
 
 [train]
 lr_schedule_kind = "cosine"
 start_lr_frac = 0.1
-base_lr = 1e-3
+base_lr = 3e-3
 end_lr_frac = 0.04
 weight_decay = 1e-8
 beta_1 = 0.9
@@ -41,19 +42,30 @@ max_grad_norm = 3.0
 schedule_free = false
 prodigy = false
 
-[mace]
-max_ell = 2
-# num_interactions = 5
-num_interactions = 2
-hidden_irreps = "128x0e"
-correlation = 2
-readout_mlp_irreps = "128x0e"
+
+[train.loss]
+energy_weight = 1
+force_weight = 0.1
+stress_weight = 0.01
 
 [train.loss.reg_loss]
 loss_delta = 0.015625
 use_rmse = false
 
-[train.loss]
-stress_weight = 0.01
-force_weight = 0.01
-energy_weight = 1
+[mace]
+num_basis = 8
+r_max = 6
+avg_num_neighbors = 14
+max_ell = 2
+hidden_irreps = ["128x0e + 64x1o + 32x2e", "128x0e + 64x1o + 32x2e"]
+interaction_reduction = "last"
+node_out_dim = 64
+share_species_embed = true
+
+[mace.head]
+inner_dims = []
+activation = "swish"
+final_activation = "Identity"
+dropout = 0.3
+residual = false
+num_heads = 1

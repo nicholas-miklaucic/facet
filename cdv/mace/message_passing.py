@@ -6,11 +6,10 @@ import e3nn_jax as e3nn
 from cdv.layers import Context, LazyInMLP
 
 
-class MessagePassingConvolution(IrrepsModule):
+class MessagePassingConvolution(nn.Module):
     avg_num_neighbors: float
     target_irreps: E3Irreps
     max_ell: int
-    activation: Callable
 
     @nn.compact
     def __call__(
@@ -55,6 +54,7 @@ class MessagePassingConvolution(IrrepsModule):
         # debug_structure(messages=messages, mix=radial, rad=radial_embedding.array)
         # debug_stat(messages=messages.array, mix=mix.array, rad=radial_embedding.array)
         # radial = nn.sigmoid(radial.array)
+        # radial = nn.tanh(radial.array)
         messages = messages * radial  # [n_nodes, k, irreps]
 
         # debug_stat(messages=messages, radial=radial)
@@ -66,7 +66,7 @@ class MessagePassingConvolution(IrrepsModule):
         return node_feats
 
 
-class InteractionBlock(nn.Module):
+class InteractionBlock(IrrepsModule):
     conv: MessagePassingConvolution
 
     @nn.compact
@@ -82,7 +82,6 @@ class InteractionBlock(nn.Module):
         # assert node_feats.ndim == 2
         # assert vectors.ndim == 2
         # assert radial_embedding.ndim == 2
-
         new_node_feats = Linear(node_feats.irreps, name='linear_up')(node_feats)
         new_node_feats = self.conv(vectors, new_node_feats, radial_embedding, receivers, ctx)
         new_node_feats = Linear(self.conv.target_irreps, name='linear_down')(new_node_feats)

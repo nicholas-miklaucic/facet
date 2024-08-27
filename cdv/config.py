@@ -16,8 +16,15 @@ from flax.struct import dataclass
 from pyrallis.fields import field
 
 from cdv import layers
-from cdv.layers import Identity, LazyInMLP
-from cdv.mace.mace import MaceModel
+from cdv.layers import E3Irreps, Identity, LazyInMLP
+from cdv.mace.e3_layers import LinearReadoutBlock, NonlinearReadoutBlock
+from cdv.mace.edge_embedding import PolynomialCutoff, RadialEmbeddingBlock, GaussBasis, ExpCutoff
+from cdv.mace.mace import (
+    MaceModel,
+)
+from cdv.mace.message_passing import InteractionBlock, MessagePassingConvolution
+from cdv.mace.node_embedding import SevenNetEmbedding
+from cdv.mace.self_connection import LinearSelfConnection, MLPSelfGate
 from cdv.regression import EFSLoss
 from cdv.vae import VAE, Decoder, Encoder, LatticeVAE, PropertyPredictor
 
@@ -315,37 +322,44 @@ class MLPConfig:
 
 @dataclass
 class MACEConfig:
+    num_basis: int = 8
+    r_max: float = 6
+    avg_num_neighbors: float = 14
     max_ell: int = 3
-    num_interactions: int = 2
-    hidden_irreps: str = '256x0e + 256x1o'
-    # hidden_irreps = '16x0e + 16x1o'
-    correlation: int = 3  # 4 is better but 5x slower
-    readout_mlp_irreps: str = '16x0e'
-    interaction_reduction: str = 'mean'
-    node_reduction: str = 'mean'
-    gate: str = 'silu'
+    hidden_irreps: tuple[str, ...] = ('128x0e + 64x1o + 32x2e', '128x0e + 64x1o + 32x2e')
+    node_out_dim: int = 64
+    head: MLPConfig = field(default_factory=MLPConfig)
+    interaction_reduction: str = 'last'
+    share_species_embed: bool = True
 
     def build(
         self,
         num_species: int,
         elem_indices: Sequence[int],
-        output_graph_irreps: str,
-        output_node_irreps: str | None = None,
     ) -> MaceModel:
         return MaceModel(
-            max_ell=self.max_ell,
-            elem_indices=jnp.array(elem_indices),
-            num_interactions=self.num_interactions,
-            hidden_irreps=str(e3nn_jax.Irreps(self.hidden_irreps)),
-            readout_mlp_irreps=str(e3nn_jax.Irreps(self.readout_mlp_irreps)),
-            output_graph_irreps=str(e3nn_jax.Irreps(output_graph_irreps)),
-            output_node_irreps=str(e3nn_jax.Irreps(output_node_irreps))
-            if output_node_irreps
-            else None,
-            num_species=num_species,
-            correlation=self.correlation,
+            hidden_irreps=self.hidden_irreps,
+            node_embedding=SevenNetEmbedding('32x0e'),
+            edge_embedding=RadialEmbeddingBlock(
+                basis=GaussBasis(self.num_basis, r_max=self.r_max, sd=1),
+                envelope=ExpCutoff(r_max=self.r_max, c=1, cutoff_start=0.6),
+                # envelope=PolynomialCutoff(r_max=self.r_max, p=6),
+            ),
+            interaction=InteractionBlock(
+                irreps_out=None,
+                conv=MessagePassingConvolution(
+                    avg_num_neighbors=self.avg_num_neighbors,
+                    target_irreps=str(E3Irreps.spherical_harmonics(self.max_ell)),
+                    max_ell=self.max_ell,
+                ),
+            ),
+            readout=LinearReadoutBlock(irreps_out=None),
+            head_templ=self.head.build(),
+            # self_connection=MLPSelfGate(irreps_out=None),
+            self_connection=LinearSelfConnection(irreps_out=None),
+            node_out_dim=self.node_out_dim,
+            share_species_embed=self.share_species_embed,
             interaction_reduction=self.interaction_reduction,
-            node_reduction=self.node_reduction,
         )
 
 
@@ -538,7 +552,6 @@ class MainConfig:
             return self.mace.build(
                 self.data.num_species,
                 self.data.metadata['element_indices'],
-                '0e',
             )
         else:
             raise ValueError(f'{self.regressor} not supported')

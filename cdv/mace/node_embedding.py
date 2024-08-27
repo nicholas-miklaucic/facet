@@ -42,7 +42,9 @@ class SevenNetEmbedding(NodeEmbedding):
 
     def setup(self):
         if self.ir_out.lmax > 0:
-            raise ValueError(f'Irreps {self.ir_out} should just be scalars for node embedding.')
+            raise ValueError(
+                f'Irreps {self.ir_out.regroup()} should just be scalars for node embedding.'
+            )
         with open('data/sevennet_stats.json', 'r') as stats_file:
             stats = json.load(stats_file)
 
