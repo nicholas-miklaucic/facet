@@ -2,6 +2,7 @@ batch_size = 32
 stack_size = 1
 do_profile = false
 num_epochs = 20
+debug_mode = false
 display = "dashboard"
 regressor = "mace"
 task = "e_form"

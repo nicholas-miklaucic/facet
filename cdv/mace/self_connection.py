@@ -265,12 +265,19 @@ class MLPSelfGate(SelfConnectionBlock):
         species_embed: Float[Array, 'num_species embed_dim'],
         ctx: Context,
     ):
-        scalars = e3nn.tensor_product(node_feats, node_feats, filter_ir_out=['0e'])
-        x = jnp.concat((scalars.array, species_embed), axis=-1)
-        out_dim = node_feats.filter(drop='0e').irreps.num_irreps
-        mlp = LazyInMLP(inner_dims=[out_dim // 2], out_dim=out_dim, name='self_gate')
-        y = E3IrrepsArray(f'{out_dim}x0e', mlp(x, ctx=ctx))
-        z = e3nn.concatenate((node_feats, y))
-        z = e3nn.gate(z)
+        if node_feats.irreps.lmax == 0:
+            # all scalars: no need to gate, just straight MLP
+            size = node_feats.irreps.num_irreps
+            mlp = LazyInMLP(inner_dims=[size], out_dim=size, name='self_mlp')
+            pre_out = mlp(node_feats.array, ctx=ctx)
+        else:
+            scalars = e3nn.tensor_product(node_feats, node_feats, filter_ir_out=['0e'])
+            x = jnp.concat((scalars.array, species_embed), axis=-1)
+            out_dim = node_feats.filter(drop='0e').irreps.num_irreps
+            mlp = LazyInMLP(inner_dims=[out_dim // 2], out_dim=out_dim, name='self_gate')
+            y = E3IrrepsArray(f'{out_dim}x0e', mlp(x, ctx=ctx))
+            z = e3nn.concatenate((node_feats, y))
+            z = e3nn.gate(z)
+            pre_out = z
 
-        return Linear(self.ir_out)(z)
+        return Linear(self.ir_out)(pre_out)

@@ -29,8 +29,8 @@ class LinearNodeEmbedding(NodeEmbedding):
 
     def setup(self):
         if self.ir_out.lmax > 0:
-            raise ValueError(f'Irreps {self.irreps_out} should just be scalars for node embedding.')
-        self.out_dim = self.irreps_out.dim
+            raise ValueError(f'Irreps {self.ir_out} should just be scalars for node embedding.')
+        self.out_dim = self.ir_out.dim
         self.embed = nn.Embed(self.num_species, self.out_dim)
 
     def __call__(self, node_species: Int[Array, ' nodes'], ctx: Context) -> E3IrrepsArray:

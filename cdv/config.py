@@ -18,12 +18,19 @@ from pyrallis.fields import field
 from cdv import layers
 from cdv.layers import E3Irreps, Identity, LazyInMLP
 from cdv.mace.e3_layers import LinearReadoutBlock, NonlinearReadoutBlock
-from cdv.mace.edge_embedding import PolynomialCutoff, RadialEmbeddingBlock, GaussBasis, ExpCutoff
+from cdv.mace.edge_embedding import (
+    BesselBasis,
+    PolynomialCutoff,
+    RadialEmbeddingBlock,
+    OldBessel1DBasis,
+    GaussBasis,
+    ExpCutoff,
+)
 from cdv.mace.mace import (
     MaceModel,
 )
 from cdv.mace.message_passing import InteractionBlock, MessagePassingConvolution
-from cdv.mace.node_embedding import SevenNetEmbedding
+from cdv.mace.node_embedding import LinearNodeEmbedding, SevenNetEmbedding
 from cdv.mace.self_connection import LinearSelfConnection, MLPSelfGate
 from cdv.regression import EFSLoss
 from cdv.vae import VAE, Decoder, Encoder, LatticeVAE, PropertyPredictor
@@ -38,7 +45,6 @@ class LogConfig:
     exp_name: Optional[str] = None
 
     # How many times to make a log each epoch.
-    # 208 = 2^4 * 13 steps per epoch with batch of 1: evenly dividing this is nice.
     logs_per_epoch: int = 8
 
     # Checkpoint every n epochs:
@@ -327,7 +333,8 @@ class MACEConfig:
     avg_num_neighbors: float = 14
     max_ell: int = 3
     hidden_irreps: tuple[str, ...] = ('128x0e + 64x1o + 32x2e', '128x0e + 64x1o + 32x2e')
-    node_out_dim: int = 64
+    species_embed_dim: int = 64
+    outs_per_node: int = 64
     head: MLPConfig = field(default_factory=MLPConfig)
     interaction_reduction: str = 'last'
     share_species_embed: bool = True
@@ -339,9 +346,14 @@ class MACEConfig:
     ) -> MaceModel:
         return MaceModel(
             hidden_irreps=self.hidden_irreps,
-            node_embedding=SevenNetEmbedding('32x0e'),
+            # node_embedding=SevenNetEmbedding('32x0e'),
+            node_embedding=LinearNodeEmbedding(
+                f'{self.species_embed_dim}x0e',
+                num_species=num_species,
+                element_indices=jnp.array(elem_indices),
+            ),
             edge_embedding=RadialEmbeddingBlock(
-                basis=GaussBasis(self.num_basis, r_max=self.r_max, sd=1),
+                basis=OldBessel1DBasis(self.num_basis, r_max=self.r_max),
                 envelope=ExpCutoff(r_max=self.r_max, c=1, cutoff_start=0.6),
                 # envelope=PolynomialCutoff(r_max=self.r_max, p=6),
             ),
@@ -349,15 +361,14 @@ class MACEConfig:
                 irreps_out=None,
                 conv=MessagePassingConvolution(
                     avg_num_neighbors=self.avg_num_neighbors,
-                    target_irreps=str(E3Irreps.spherical_harmonics(self.max_ell)),
                     max_ell=self.max_ell,
                 ),
             ),
             readout=LinearReadoutBlock(irreps_out=None),
             head_templ=self.head.build(),
-            # self_connection=MLPSelfGate(irreps_out=None),
-            self_connection=LinearSelfConnection(irreps_out=None),
-            node_out_dim=self.node_out_dim,
+            self_connection=MLPSelfGate(irreps_out=None),
+            # self_connection=LinearSelfConnection(irreps_out=None),
+            outs_per_node=self.outs_per_node,
             share_species_embed=self.share_species_embed,
             interaction_reduction=self.interaction_reduction,
         )
@@ -481,6 +492,9 @@ class MainConfig:
     # Folder to initialize the encoders and downsampling.
     encoder_start_from: Optional[Path] = None
 
+    # Debug mode: turns off mid-run checkpointing and Neptune tracking.
+    debug_mode: bool = False
+
     # Display kind for training runs: One of 'dashboard', 'progress', or 'quiet'.
     display: str = 'dashboard'
 
@@ -556,6 +570,29 @@ class MainConfig:
         else:
             raise ValueError(f'{self.regressor} not supported')
 
+    def as_dict(self):
+        """Serializes the relevant values into a dictionary suitable for e.g., Neptune logging."""
+        cfg: dict = pyrallis.encode(self)
+        for key in ('do_profile', 'cli', 'log', 'debug_mode', 'display'):
+            cfg.pop(key)
+
+        for key in ('raw_data_folder', 'data_folder', 'batch_n_nodes', 'batch_n_graphs'):
+            cfg['data'].pop(key)
+
+        def convert_leaves(leaf):
+            if isinstance(leaf, dict):
+                return {k: convert_leaves(v) for k, v in leaf.items()}
+            elif leaf is None:
+                return 'None'
+            elif isinstance(leaf, (tuple, list)):
+                return {i: convert_leaves(v) for i, v in enumerate(leaf)}
+            else:
+                return leaf
+
+        cfg = convert_leaves(cfg)
+
+        return cfg
+
 
 if __name__ == '__main__':
     from pathlib import Path
@@ -575,4 +612,6 @@ if __name__ == '__main__':
             pyrallis.cfgparsing.dump(default, outfile, omit_defaults=True)
 
         with default_path.open('r') as conf:
-            pyrallis.cfgparsing.load(MainConfig, conf)
+            cfg = pyrallis.cfgparsing.load(MainConfig, conf)
+
+        print(cfg.as_dict())

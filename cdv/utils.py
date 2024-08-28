@@ -371,9 +371,9 @@ def flax_summary(
         color = INFERNA[color_i]
         t = Text(s.strip(), style=Style(color=color, bold=(e > 3)))
         f = io.StringIO()
-        console = rich.console.Console(
-            file=f, color_system=rich.console.Console().color_system, **(console_kwargs or {})
-        )
+        kwargs = {'width': rich.get_console().width}
+        kwargs.update(console_kwargs or {})
+        console = rich.console.Console(file=f, color_system='truecolor', **kwargs)
         console.print(t, end='')
         return f.getvalue()
 

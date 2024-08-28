@@ -18,8 +18,7 @@ def to_dot_graph(x):
     return xla_client._xla.hlo_module_to_dot_graph(xla_client._xla.hlo_module_from_text(x))
 
 
-@pyrallis.argparsing.wrap()
-def show_model(config: MainConfig, make_hlo_dot=False, do_profile=False):
+def show_model(config: MainConfig, make_hlo_dot=False, do_profile=False, show_stat=False):
     # print(config.data.avg_dist(6), config.data.avg_num_neighbors(6))
     kwargs = dict(ctx=Context(training=True))
     num_batches, dl = dataloader(config, split='train', infinite=True)
@@ -28,7 +27,7 @@ def show_model(config: MainConfig, make_hlo_dot=False, do_profile=False):
 
     batch = jax.device_put(batch, config.device.devices()[0])
 
-    debug_structure(batch=batch)
+    # debug_structure(batch=batch)
 
     if config.task == 'e_form':
         mod = config.build_regressor()
@@ -69,16 +68,15 @@ def show_model(config: MainConfig, make_hlo_dot=False, do_profile=False):
     debug_structure(module=mod, out=out, loss=loss)
     debug_stat(input=batch, out=out, loss=loss)
     rngs.pop('params')
-    flax_summary(mod, rngs=rngs, cg=b1, **kwargs)
 
     rot_batch, rots = jax.vmap(lambda x: x.rotate(123))(batch)
-    debug_structure(rots=rots)
+    # debug_structure(rots=rots)
 
-    if True:
-        rot_out = apply_fn(params, rot_batch)
-    else:
+    if show_stat:
         with nn.intercept_methods(intercept_stat):
             rot_out = base_apply_fn(params, rot_batch)
+    else:
+        rot_out = apply_fn(params, rot_batch)
 
     debug_stat(
         equiv_error=jax.tree.map(
@@ -88,16 +86,29 @@ def show_model(config: MainConfig, make_hlo_dot=False, do_profile=False):
         )
     )
 
+    flax_summary(mod, rngs=rngs, cg=b1, **kwargs)
+
+    val_and_grad = jax.jit(jax.value_and_grad(lambda x: jnp.mean(loss_fn(x)['loss'])))
+    cost_analysis = val_and_grad.lower(params).cost_analysis()
+    if cost_analysis is not None and 'flops' in cost_analysis:
+        cost = cost_analysis['flops']
+    else:
+        cost = 0
+
+    cost /= 1e9
+
+    print(f'Total cost: {cost:.3f} GFLOPs')
+
     if do_profile:
         with jax.profiler.trace('/tmp/jax-trace', create_perfetto_trace=True):
-            val, grad = jax.value_and_grad(lambda x: jnp.mean(loss_fn(x)['loss']))(params)
+            val, grad = val_and_grad(params)
             jax.block_until_ready(grad)
     else:
-        val, grad = jax.value_and_grad(lambda x: jnp.mean(loss_fn(x)['loss']))(params)
-    debug_stat(val=val, grad=grad)
+        val, grad = val_and_grad(params)
+    debug_stat(loss=val, grad=grad, tree_depth=6)
 
     if not make_hlo_dot:
-        return
+        return cost
 
     grad_loss = jax.xla_computation(jax.value_and_grad(loss))(params)
     with open('model.hlo', 'w') as f:
@@ -116,6 +127,8 @@ def show_model(config: MainConfig, make_hlo_dot=False, do_profile=False):
     for f in ('model.dot', 'model_opt.dot'):
         subprocess.run(['sfdp', f, '-Tsvg', '-O', '-x'])
 
+    return cost
+
 
 if __name__ == '__main__':
-    show_model()
+    pyrallis.argparsing.wrap()(show_model)()

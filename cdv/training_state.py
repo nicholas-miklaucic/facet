@@ -6,8 +6,8 @@ from collections import defaultdict
 from datetime import datetime, timedelta
 from os import PathLike
 from pathlib import Path
-from shutil import copytree
-from typing import Any, Mapping, Sequence
+from shutil import copytree, make_archive
+from typing import Any, Literal, Mapping, Sequence
 
 import chex
 import jax
@@ -24,8 +24,12 @@ from cdv.checkpointing import best_ckpt
 from cdv.config import LossConfig, MainConfig
 from cdv.dataset import CrystalGraphs, dataloader
 from cdv.layers import Context
+from cdv.model_summary import model_summary
 from cdv.regression import EFSOutput, EFSWrapper
 from cdv.utils import item_if_arr
+
+import neptune
+from neptune.types import File
 
 
 @struct.dataclass
@@ -117,7 +121,29 @@ class TrainingRun:
             options=opts,
         )
 
+        self.run = self.init_run()
+
         self.test_loss = 1000
+
+    def init_run(self) -> neptune.Run:
+        run = neptune.init_run(
+            mode='debug' if self.config.debug_mode else 'async',
+            tags=[self.config.task],
+            capture_stderr=False,
+            capture_stdout=False,
+            source_files='cdv/**/*.py',
+        )
+
+        run['parameters'] = self.config.as_dict()
+        run['full_config'] = File.from_content(
+            pyrallis.cfgparsing.dump(self.config, omit_defaults=False), extension='toml'
+        )
+        summary = model_summary(self.config)
+        run['model_summary'] = File.from_content(summary['html'], extension='html')
+        run['gflops'] = summary['gflops']
+        run['dataset_metadata'].track_files(str(self.config.data.dataset_folder / 'metadata.json'))
+        run['seed'] = self.seed
+        return run
 
     @staticmethod
     @ft.partial(jax.jit, static_argnames=('task', 'config'))
@@ -228,6 +254,19 @@ class TrainingRun:
     def next_step(self):
         return self.step(self.curr_step + 1, next(self.dl))
 
+    def log_metric(self, metric_name: str, metric_value, split: Literal['train', 'valid', None]):
+        if split == 'train':
+            self.metrics_history[f'tr_{metric_name}'].append(metric_value)
+            self.run[f'train/{metric_name}'].append(value=metric_value, step=self.curr_epoch)
+        elif split == 'valid':
+            self.metrics_history[f'te_{metric_name}'].append(metric_value)
+            self.run[f'valid/{metric_name}'].append(value=metric_value, step=self.curr_epoch)
+        elif split is None:
+            self.metrics_history[f'{metric_name}'].append(metric_value)
+            self.run[f'{metric_name}'].append(value=metric_value, step=self.curr_epoch)
+        else:
+            raise ValueError(f'Split invalid: {split}')
+
     @property
     def eval_state(self) -> TrainState:
         if self.config.train.schedule_free:
@@ -253,6 +292,13 @@ class TrainingRun:
                 self.state = self.state.replace(
                     params=best_ckpt(self.config.restart_from)['state']['params']
                 )
+
+            # log number of parameters
+            self.run['params'] = int(
+                jax.tree.reduce(
+                    lambda x, y: x + y, jax.tree.map(lambda x: x.size, self.state.params)
+                )
+            )
         elif step >= self.num_steps:
             return None
 
@@ -267,42 +313,44 @@ class TrainingRun:
         # jax.debug.visualize_array_sharding(preds[..., 0])
         self.state = self.compute_metrics(preds=preds, state=self.eval_state, **kwargs)
 
-        if (
-            self.should_log or self.should_ckpt or self.should_validate
-        ):  # one training epoch has passed
+        if self.should_log or self.should_ckpt or self.should_validate:
             for metric, value in self.state.metrics.items():  # compute metrics
                 if metric == 'grad_norm':
-                    self.metrics_history['grad_norm'].append(value)  # record metrics
+                    self.log_metric('grad_norm', value, None)
                     continue
-                self.metrics_history[f'tr_{metric}'].append(value)  # record metrics
+                self.log_metric(metric, value, 'train')
 
                 if not self.should_validate:
                     if f'te_{metric}' in self.metrics_history:
-                        self.metrics_history[f'te_{metric}'].append(
-                            self.metrics_history[f'te_{metric}'][-1]
-                        )
+                        test_value = self.metrics_history[f'te_{metric}'][-1]
                     else:
-                        self.metrics_history[f'te_{metric}'].append(0)
+                        test_value = 0
+                    self.log_metric(metric, test_value, 'valid')
 
             self.state = self.state.replace(
                 metrics=Metrics()
             )  # reset train_metrics for next training epoch
 
-            self.metrics_history['lr'].append(self.lr)
-            self.metrics_history['step'].append(self.curr_step)
-            self.metrics_history['epoch'].append(self.curr_step / self.steps_in_epoch)
-            self.metrics_history['rel_mins'].append((time.monotonic() - self.start_time) / 60)
+            self.log_metric('lr', self.lr, None)
+            self.log_metric('step', self.curr_step, None)
+            self.log_metric('epoch', self.curr_epoch, None)
+            self.log_metric('rel_mins', (time.monotonic() - self.start_time) / 60, None)
             if max(self.metrics_history['epoch'], default=0) < 1:
-                self.metrics_history['throughput'].append(
-                    self.curr_step * self.config.batch_size / self.metrics_history['rel_mins'][-1]
+                self.log_metric(
+                    'throughput',
+                    self.curr_step
+                    * self.config.batch_size
+                    * self.config.stack_size
+                    / self.metrics_history['rel_mins'][-1],
+                    None,
                 )
             else:
                 prev, curr = self.metrics_history['rel_mins'][-2:]
                 min_delta = curr - prev
 
                 prev, curr = self.metrics_history['step'][-2:]
-                size = (curr - prev) * self.config.batch_size
-                self.metrics_history['throughput'].append(size / min_delta)
+                size = (curr - prev) * self.config.batch_size * self.config.stack_size
+                self.log_metric('throughput', size / min_delta, None)
 
         # debug_structure(self.state)
         # print(self.metrics_history)
@@ -344,7 +392,7 @@ class TrainingRun:
             for metric, value in self.test_state.metrics.items():
                 if metric == 'grad_norm':
                     continue
-                self.metrics_history[f'te_{metric}'].append(value)
+                self.log_metric(metric, value, 'valid')
                 if f'{metric}' == 'loss':
                     self.test_loss = value
 
@@ -367,16 +415,31 @@ class TrainingRun:
             self.step(step, batch)
 
     @property
+    def curr_epoch(self) -> float:
+        return self.curr_step / self.steps_in_epoch
+
+    @property
+    def is_last_step(self):
+        return self.curr_step + 1 == self.num_steps
+
+    @property
     def should_log(self):
-        return (self.curr_step + 1) % (self.steps_in_epoch // self.config.log.logs_per_epoch) == 0
+        return (self.curr_step + 1) % (
+            self.steps_in_epoch // self.config.log.logs_per_epoch
+        ) == 0 or self.is_last_step
 
     @property
     def should_ckpt(self):
-        return (self.curr_step + 1) % (self.config.log.epochs_per_ckpt * self.steps_in_epoch) == 0
+        right_step = (self.curr_step + 1) % (
+            self.config.log.epochs_per_ckpt * self.steps_in_epoch
+        ) == 0
+        return (right_step or self.is_last_step) and not self.config.debug_mode
 
     @property
     def should_validate(self):
-        return (self.curr_step + 1) % (self.config.log.epochs_per_valid * self.steps_in_epoch) == 0
+        return (self.curr_step + 1) % (
+            self.config.log.epochs_per_valid * self.steps_in_epoch
+        ) == 0 or self.is_last_step
 
     @property
     def lr(self):
@@ -390,8 +453,9 @@ class TrainingRun:
 
     def save_final(self, out_dir: str | PathLike):
         """Save final model to directory."""
-        self.mngr.wait_until_finished()
-        copytree(self.mngr.directory, Path(out_dir) / 'ckpts/')
+        if not self.config.debug_mode:
+            self.mngr.wait_until_finished()
+            copytree(self.mngr.directory, Path(out_dir) / 'ckpts/')
 
     def finish(self):
         now = datetime.now()
@@ -412,5 +476,12 @@ class TrainingRun:
             pyrallis.cfgparsing.dump(self.config, outfile)
 
         self.save_final(folder / 'final_ckpt')
+
+        self.run['exp_name'] = exp_name
+
+        zipname = make_archive(exp_name, 'zip', root_dir=folder)
+        self.run['checkpoint'].upload(zipname, wait=True)
+
+        self.run.stop()
 
         return folder

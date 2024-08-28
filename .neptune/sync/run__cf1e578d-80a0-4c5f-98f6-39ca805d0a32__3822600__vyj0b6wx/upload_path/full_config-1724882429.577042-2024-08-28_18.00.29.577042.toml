@@ -1,19 +1,24 @@
-batch_size = 32
+batch_size = 64
 stack_size = 1
 do_profile = false
-debug_mode = true
 num_epochs = 5
+debug_mode = true
 display = "dashboard"
 regressor = "mace"
 task = "e_form"
 
 [data]
 dataset_name = "mptrj"
+raw_data_folder = "data"
+data_folder = "precomputed"
 shuffle_seed = 1618
 train_split = 30
 test_split = 3
 valid_split = 3
-batches_per_group = 50
+batches_per_group = 100
+batch_n_nodes = 1024
+k = 16
+batch_n_graphs = 32
 
 [cli]
 verbosity = "info"
@@ -22,7 +27,7 @@ show_progress = true
 [device]
 device = "gpu"
 max_gpus = 3
-gpu_ids = [0, 1, 2]
+gpu_ids = [ 0, 1, 2,]
 
 [log]
 log_dir = "logs"
@@ -33,7 +38,7 @@ epochs_per_valid = 2
 [train]
 lr_schedule_kind = "cosine"
 start_lr_frac = 0.1
-base_lr = 1e-3
+base_lr = 0.003
 end_lr_frac = 0.04
 weight_decay = 1e-8
 beta_1 = 0.9
@@ -43,25 +48,21 @@ max_grad_norm = 3.0
 schedule_free = false
 prodigy = false
 
+[mace]
+num_basis = 8
+r_max = 6.0
+avg_num_neighbors = 14.0
+max_ell = 2
+hidden_irreps = [ "128x0e + 64x1o + 32x2e", "256x0e",]
+species_embed_dim = 64
+outs_per_node = 64
+interaction_reduction = "last"
+share_species_embed = true
 
 [train.loss]
-energy_weight = 1
+energy_weight = 1.0
 force_weight = 0.1
 stress_weight = 0.01
-
-[train.loss.reg_loss]
-loss_delta = 0.015625
-use_rmse = false
-
-[mace]
-num_basis = 10
-r_max = 7
-avg_num_neighbors = 14
-max_ell = 2
-hidden_irreps = ["128x0e + 64x1o + 32x2e", "256x0e"]
-interaction_reduction = "last"
-outs_per_node = 64
-share_species_embed = true
 
 [mace.head]
 inner_dims = []
@@ -70,3 +71,7 @@ final_activation = "Identity"
 dropout = 0.3
 residual = false
 num_heads = 1
+
+[train.loss.reg_loss]
+loss_delta = 0.015625
+use_rmse = false

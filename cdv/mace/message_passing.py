@@ -4,11 +4,11 @@ from cdv.mace.e3_layers import E3Irreps, E3IrrepsArray, IrrepsModule, Linear
 import jax.numpy as jnp
 import e3nn_jax as e3nn
 from cdv.layers import Context, LazyInMLP
+from cdv.utils import debug_structure
 
 
 class MessagePassingConvolution(nn.Module):
     avg_num_neighbors: float
-    target_irreps: E3Irreps
     max_ell: int
 
     @nn.compact
@@ -28,11 +28,13 @@ class MessagePassingConvolution(nn.Module):
         ]
         # debug_structure(msgs=messages, vecs=vectors)
 
-        msg_prefix = messages_broadcast.filter(self.target_irreps)
+        inner_irreps = e3nn.Irreps.spherical_harmonics(self.max_ell)
+
+        msg_prefix = messages_broadcast.filter(inner_irreps)
         vec_harms = e3nn.tensor_product(
             messages_broadcast,
             e3nn.spherical_harmonics(range(1, self.max_ell + 1), vectors, True),
-            filter_ir_out=self.target_irreps,
+            filter_ir_out=inner_irreps,
         )
 
         # debug_structure(
@@ -62,6 +64,7 @@ class MessagePassingConvolution(nn.Module):
         zeros = E3IrrepsArray.zeros(messages.irreps, node_feats.shape[:1], messages.dtype)
         # TODO flip this perhaps?
         node_feats = zeros.at[receivers].add(messages)  # [n_nodes, irreps]
+        node_feats = node_feats / self.avg_num_neighbors
 
         return node_feats
 
@@ -82,9 +85,10 @@ class InteractionBlock(IrrepsModule):
         # assert node_feats.ndim == 2
         # assert vectors.ndim == 2
         # assert radial_embedding.ndim == 2
-        new_node_feats = Linear(node_feats.irreps, name='linear_up')(node_feats)
+        # new_node_feats = Linear(node_feats.irreps, name='linear_up')(node_feats)
+        new_node_feats = node_feats
         new_node_feats = self.conv(vectors, new_node_feats, radial_embedding, receivers, ctx)
-        new_node_feats = Linear(self.conv.target_irreps, name='linear_down')(new_node_feats)
+        new_node_feats = Linear(self.ir_out, name='linear_down')(new_node_feats)
 
         if new_node_feats.irreps == node_feats.irreps:
             node_feats = new_node_feats + node_feats

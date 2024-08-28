@@ -164,7 +164,7 @@ class MaceModel(nn.Module):
     readout: IrrepsModule
     head_templ: LazyInMLP
 
-    node_out_dim: int
+    outs_per_node: int
     share_species_embed: bool = True
 
     # How to combine the outputs of different interaction blocks.
@@ -173,7 +173,7 @@ class MaceModel(nn.Module):
 
     def setup(self):
         self.mace = MACE(
-            irreps_out=f'{self.node_out_dim}x0e',
+            irreps_out=f'{self.outs_per_node}x0e',
             hidden_irreps=self.hidden_irreps,
             node_embedding=self.node_embedding,
             radial_embedding=self.edge_embedding,

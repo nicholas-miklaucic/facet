@@ -5,7 +5,7 @@ import jax.numpy as jnp
 from flax import linen as nn
 from jaxtyping import Float, Array
 
-from cdv.layers import Context, E3IrrepsArray
+from cdv.layers import Context, E3IrrepsArray, Identity
 
 
 class RadialBasis(nn.Module):
@@ -71,6 +71,40 @@ class BesselBasis(RadialBasis):
         return self.prefactor * (numerator / (edge_lengths[..., None] + 1e-4))
 
 
+class OldBessel1DBasis(RadialBasis):
+    """Uses spherical Bessel functions with a cutoff, as in DimeNet++."""
+
+    r_max: float
+    freq_trainable: bool = True
+
+    def setup(self):
+        def freq_init(rng):
+            return jnp.arange(self.num_basis, dtype=jnp.float32) + 1
+
+        if self.freq_trainable:
+            self.freq = self.param('freq', freq_init)
+        else:
+            self.freq = freq_init(None)
+
+    def __call__(self, x, ctx: Context):
+        dist = x[..., None] / self.r_max
+
+        # e(d) = sqrt(2/c) * sin(fπd/c)/d
+        # we use sinc so it's defined at 0
+        # jnp.sinc is sin(πx)/(πx)
+        # e(d) = sqrt(2/c) * sin(πfd/c)/(fd/c) * f/c
+        # e(d) = sqrt(2/c) * sinc(πfd/c)) * πf/c
+
+        e_d = (
+            jnp.sqrt(2 / self.r_max)
+            * jnp.sinc(self.freq * dist)
+            * (jnp.pi * self.freq / self.r_max)
+        )
+
+        # debug_stat(e_d=e_d, env=env, dist=dist)
+        return e_d
+
+
 class PolynomialCutoff(Envelope):
     # https://github.com/ACEsuit/mace/blob/575af0171369e2c19e04b115140b9901f83eb00c/mace/modules/radial.py#L112
 
@@ -113,3 +147,35 @@ class ExpCutoff(Envelope):
         envelope = 1 - jnp.where(t < 0.5, exp_func(2 * t) / 2, 1 - exp_func(2 - 2 * t) / 2)
 
         return envelope
+
+
+if __name__ == '__main__':
+    import jax
+    import jax.random as jr
+    from cdv.utils import debug_stat, debug_structure
+
+    rng = jr.key(123)
+    radii = jr.truncated_normal(rng, lower=-3.4, upper=5, shape=(32, 16), dtype=jnp.bfloat16) + 4
+    data = {}
+    kwargs = dict(num_basis=10, r_max=7)
+    cutoff = ExpCutoff(r_max=kwargs['r_max'], c=1, cutoff_start=0.6)
+
+    mods = [cutoff]
+    for basis in (GaussBasis(**kwargs), BesselBasis(**kwargs), OldBessel1DBasis(**kwargs)):
+        mods.append(RadialEmbeddingBlock(basis=basis, envelope=cutoff))
+
+    for mod in mods:
+        name = mod.basis.__class__.__name__ if hasattr(mod, 'basis') else 'raw'
+
+        def embed(radii):
+            out, params = mod.init_with_output(rng, radii, ctx=Context(training=True))
+            if hasattr(out, 'array'):
+                return out.array
+            else:
+                return out
+
+        data[name] = embed(radii)
+        data[name + '_grad'] = jax.grad(lambda x: jnp.sum(embed(x)))(radii)
+
+    # debug_structure(**data)
+    debug_stat(**data)
