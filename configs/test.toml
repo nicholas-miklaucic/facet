@@ -1,7 +1,7 @@
 batch_size = 32
 stack_size = 1
 do_profile = false
-debug_mode = false
+debug_mode = true
 num_epochs = 10
 display = "dashboard"
 regressor = "mace"
@@ -70,7 +70,7 @@ kind = "mlp-gate"
 num_hidden_layers = 1
 
 [mace.head]
-inner_dims = [32]
+inner_dims = []
 activation = "swish"
 final_activation = "Identity"
 dropout = 0.3
@@ -78,26 +78,26 @@ residual = false
 num_heads = 1
 
 [mace.edge_embed.radial_basis]
-num_basis = 10
-r_max = 7
+num_basis = 8
+r_max = 6
 kind = "bessel"
 freq_trainable = true
 
 [mace.edge_embed.envelope]
 kind = "exp"
-cutoff_start = 0.9
-c = 0.1
+cutoff_start = 0.8
+c = 1
 
 [mace.interaction.message]
 kind = "simple-mix-mlp-conv"
 avg_num_neighbors = 14
-max_ell = 3
+max_ell = 2
 
 [mace.self_connection.mlp]
 inner_dims = []
 activation = "swish"
 final_activation = "Identity"
-dropout = 0.1
+dropout = 0
 residual = false
 num_heads = 1
 

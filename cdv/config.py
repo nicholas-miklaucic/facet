@@ -439,7 +439,7 @@ class SimpleInteractionBlockConfig(InteractionConfig):
     kind: Const('simple') = 'simple'
 
     def build(self) -> SimpleInteraction:
-        return SimpleInteraction(irreps_out=None, conv=self.inner_conv.build())
+        return SimpleInteraction(irreps_out=None, conv=self.message.build())
 
 
 @dataclass

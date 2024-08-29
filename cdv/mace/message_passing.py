@@ -84,7 +84,7 @@ class SimpleInteraction(IrrepsModule):
         new_node_feats = self.conv(vectors, new_node_feats, radial_embedding, receivers, ctx)
         new_node_feats = Linear(self.ir_out, name='linear_down')(new_node_feats)
 
-        return node_feats  # [n_nodes, target_irreps]
+        return new_node_feats  # [n_nodes, target_irreps]
 
 
 # class InteractionBlock(IrrepsModule):

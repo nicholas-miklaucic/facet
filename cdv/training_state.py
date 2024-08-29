@@ -1,6 +1,7 @@
 from dataclasses import field
 import functools as ft
 import random
+import shutil
 import time
 from collections import defaultdict
 from datetime import datetime, timedelta
@@ -138,9 +139,12 @@ class TrainingRun:
         run['full_config'] = File.from_content(
             pyrallis.cfgparsing.dump(self.config, omit_defaults=False), extension='toml'
         )
-        summary = model_summary(self.config)
-        run['model_summary'] = File.from_content(summary['html'], extension='html')
-        run['gflops'] = summary['gflops']
+
+        if not self.config.debug_mode:
+            summary = model_summary(self.config)
+            run['model_summary'] = File.from_content(summary['html'], extension='html')
+            run['gflops'] = summary['gflops']
+
         run['dataset_metadata'].track_files(str(self.config.data.dataset_folder / 'metadata.json'))
         run['seed'] = self.seed
         return run
@@ -460,7 +464,7 @@ class TrainingRun:
     def finish(self):
         now = datetime.now()
         if self.config.log.exp_name is None:
-            exp_name = now.strftime('%m-%d-%H')
+            exp_name = now.strftime('%m-%d-%H-%M')
         else:
             exp_name = self.config.log.exp_name
 
@@ -480,7 +484,9 @@ class TrainingRun:
         self.run['exp_name'] = exp_name
 
         zipname = make_archive(exp_name, 'zip', root_dir=folder)
-        self.run['checkpoint'].upload(zipname, wait=True)
+        new_path = Path('logs') / f'{exp_name}.zip'
+        shutil.move(zipname, new_path)
+        self.run['checkpoint'].upload(str(new_path), wait=True)
 
         self.run.stop()
 
