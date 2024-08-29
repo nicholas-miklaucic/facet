@@ -7,9 +7,10 @@ from cdv.layers import Context, LazyInMLP
 from cdv.utils import debug_structure
 
 
-class MessagePassingConvolution(nn.Module):
+class SimpleMixMLPConv(nn.Module):
     avg_num_neighbors: float
     max_ell: int
+    radial_mix: LazyInMLP
 
     @nn.compact
     def __call__(
@@ -46,12 +47,9 @@ class MessagePassingConvolution(nn.Module):
             axis=-1,
         ).regroup()  # [n_nodes, irreps]
 
-        radial = LazyInMLP(
-            [],
-            out_dim=messages.irreps.num_irreps,
-            normalization='none',
-            name='radial_mix',
-        )(radial_embedding, ctx)  # [n_nodes, k, num_irreps]
+        radial = self.radial_mix.copy(out_dim=messages.irreps.num_irreps)(
+            radial_embedding, ctx
+        )  # [n_nodes, k, num_irreps]
 
         # debug_structure(messages=messages, mix=radial, rad=radial_embedding.array)
         # debug_stat(messages=messages.array, mix=mix.array, rad=radial_embedding.array)
@@ -69,8 +67,8 @@ class MessagePassingConvolution(nn.Module):
         return node_feats
 
 
-class InteractionBlock(IrrepsModule):
-    conv: MessagePassingConvolution
+class SimpleInteraction(IrrepsModule):
+    conv: SimpleMixMLPConv
 
     @nn.compact
     def __call__(
@@ -82,18 +80,38 @@ class InteractionBlock(IrrepsModule):
         ctx: Context,
     ) -> tuple[E3IrrepsArray, E3IrrepsArray]:
         """-> n_nodes irreps"""
-        # assert node_feats.ndim == 2
-        # assert vectors.ndim == 2
-        # assert radial_embedding.ndim == 2
-        # new_node_feats = Linear(node_feats.irreps, name='linear_up')(node_feats)
         new_node_feats = node_feats
         new_node_feats = self.conv(vectors, new_node_feats, radial_embedding, receivers, ctx)
         new_node_feats = Linear(self.ir_out, name='linear_down')(new_node_feats)
 
-        if new_node_feats.irreps == node_feats.irreps:
-            node_feats = new_node_feats + node_feats
-        else:
-            node_feats = new_node_feats
-
-        assert node_feats.ndim == 2
         return node_feats  # [n_nodes, target_irreps]
+
+
+# class InteractionBlock(IrrepsModule):
+#     conv: MessagePassingConvolution
+
+#     @nn.compact
+#     def __call__(
+#         self,
+#         vectors: E3IrrepsArray,  # [n_edges, 3]
+#         node_feats: E3IrrepsArray,  # [n_nodes, irreps]
+#         radial_embedding: jnp.ndarray,  # [n_edges, radial_embedding_dim]
+#         receivers: jnp.ndarray,  # [n_edges, ]
+#         ctx: Context,
+#     ) -> tuple[E3IrrepsArray, E3IrrepsArray]:
+#         """-> n_nodes irreps"""
+#         # assert node_feats.ndim == 2
+#         # assert vectors.ndim == 2
+#         # assert radial_embedding.ndim == 2
+#         # new_node_feats = Linear(node_feats.irreps, name='linear_up')(node_feats)
+#         new_node_feats = node_feats
+#         new_node_feats = self.conv(vectors, new_node_feats, radial_embedding, receivers, ctx)
+#         new_node_feats = Linear(self.ir_out, name='linear_down')(new_node_feats)
+
+#         if new_node_feats.irreps == node_feats.irreps:
+#             node_feats = new_node_feats + node_feats
+#         else:
+#             node_feats = new_node_feats
+
+#         assert node_feats.ndim == 2
+#         return node_feats  # [n_nodes, target_irreps]

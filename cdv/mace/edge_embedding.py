@@ -55,23 +55,6 @@ class GaussBasis(RadialBasis):
 
 
 class BesselBasis(RadialBasis):
-    """Bessel radial basis functions."""
-
-    # https://github.com/ACEsuit/mace/blob/575af0171369e2c19e04b115140b9901f83eb00c/mace/modules/radial.py#L17
-
-    r_max: float
-
-    def setup(self):
-        self.bessel_weights = self.r_max * jnp.linspace(1.0, self.num_basis, self.num_basis)
-
-        self.prefactor = jnp.sqrt(2.0 / self.r_max)
-
-    def __call__(self, edge_lengths: Float[Array, '*batch'], ctx: Context) -> E3IrrepsArray:
-        numerator = jnp.sinc(self.bessel_weights * edge_lengths[..., None])
-        return self.prefactor * (numerator / (edge_lengths[..., None] + 1e-4))
-
-
-class OldBessel1DBasis(RadialBasis):
     """Uses spherical Bessel functions with a cutoff, as in DimeNet++."""
 
     r_max: float
@@ -158,10 +141,10 @@ if __name__ == '__main__':
     radii = jr.truncated_normal(rng, lower=-3.4, upper=5, shape=(32, 16), dtype=jnp.bfloat16) + 4
     data = {}
     kwargs = dict(num_basis=10, r_max=7)
-    cutoff = ExpCutoff(r_max=kwargs['r_max'], c=1, cutoff_start=0.6)
+    cutoff = ExpCutoff(r_max=kwargs['r_max'], c=0.1, cutoff_start=0.8)
 
     mods = [cutoff]
-    for basis in (GaussBasis(**kwargs), BesselBasis(**kwargs), OldBessel1DBasis(**kwargs)):
+    for basis in (GaussBasis(**kwargs), BesselBasis(**kwargs)):
         mods.append(RadialEmbeddingBlock(basis=basis, envelope=cutoff))
 
     for mod in mods:

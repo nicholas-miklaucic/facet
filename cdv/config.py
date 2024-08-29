@@ -1,9 +1,9 @@
 from collections.abc import Sequence
 from json import JSONDecodeError
 import logging
-from enum import Enum
+from enum import Enum, EnumType
 from pathlib import Path
-from typing import Any, Callable, Mapping, Optional
+from typing import Any, Callable, Literal, Mapping, Optional, Union
 
 import e3nn_jax
 import jax
@@ -16,20 +16,20 @@ from flax.struct import dataclass
 from pyrallis.fields import field
 
 from cdv import layers
-from cdv.layers import E3Irreps, Identity, LazyInMLP
+from cdv.layers import E3Irreps, Envelope, Identity, LazyInMLP
 from cdv.mace.e3_layers import LinearReadoutBlock, NonlinearReadoutBlock
 from cdv.mace.edge_embedding import (
     BesselBasis,
     PolynomialCutoff,
+    RadialBasis,
     RadialEmbeddingBlock,
-    OldBessel1DBasis,
     GaussBasis,
     ExpCutoff,
 )
 from cdv.mace.mace import (
     MaceModel,
 )
-from cdv.mace.message_passing import InteractionBlock, MessagePassingConvolution
+from cdv.mace.message_passing import SimpleInteraction, SimpleMixMLPConv
 from cdv.mace.node_embedding import LinearNodeEmbedding, SevenNetEmbedding
 from cdv.mace.self_connection import LinearSelfConnection, MLPSelfGate
 from cdv.regression import EFSLoss
@@ -326,16 +326,183 @@ class MLPConfig:
         )
 
 
+class Constant:
+    value: Any = None
+
+    @classmethod
+    def _decode(cls, x):
+        if x == cls.value:
+            return x
+        else:
+            raise ValueError(f'{x} != {cls.value}')
+
+    def _encode(self):
+        return self.value
+
+
+pyrallis.decode.register(Constant, lambda t, x: t._decode(x), include_subclasses=True)
+pyrallis.encode.register(Constant, Constant._encode)
+
+
+def Const(val) -> type[Constant]:
+    class ConstantImpl(Constant):
+        value = val
+
+    return ConstantImpl
+
+
 @dataclass
-class MACEConfig:
-    num_basis: int = 8
-    r_max: float = 6
+class RadialBasisConfig:
+    num_basis: int = 10
+    r_max: float = 7
+
+    def build(self) -> RadialBasis:
+        raise NotImplementedError()
+
+
+@dataclass
+class GaussBasisConfig(RadialBasisConfig):
+    kind: Const('gauss') = 'gauss'
+    sd: float = 1
+
+    def build(self) -> BesselBasis:
+        return GaussBasis(self.num_basis, self.r_max, self.sd)
+
+
+@dataclass
+class BesselBasisConfig(RadialBasisConfig):
+    kind: Const('bessel') = 'bessel'
+    freq_trainable: bool = True
+
+    def build(self) -> BesselBasis:
+        return BesselBasis(
+            num_basis=self.num_basis, r_max=self.r_max, freq_trainable=self.freq_trainable
+        )
+
+
+@dataclass
+class EnvelopeConfig:
+    def build(self, r_max: float) -> Envelope:
+        raise NotImplementedError
+
+
+@dataclass
+class ExpCutoffConfig:
+    kind: Const('exp') = 'exp'
+    cutoff_start: float = 0.9
+    c: float = 0.1
+
+    def build(self, r_max: float) -> ExpCutoff:
+        return ExpCutoff(r_max=r_max, c=self.c, cutoff_start=self.cutoff_start)
+
+
+@dataclass
+class RadialEmbeddingConfig:
+    radial_basis: Union[GaussBasisConfig, BesselBasisConfig] = field(
+        default_factory=BesselBasisConfig
+    )
+    envelope: Union[ExpCutoffConfig] = field(default_factory=ExpCutoffConfig)
+
+    def build(self):
+        return RadialEmbeddingBlock(
+            basis=self.radial_basis.build(), envelope=self.envelope.build(self.radial_basis.r_max)
+        )
+
+
+@dataclass
+class MessageConfig:
+    pass
+
+
+@dataclass
+class SimpleMixMessageConfig(MessageConfig):
+    kind: Const('simple-mix-mlp-conv') = 'simple-mix-mlp-conv'
     avg_num_neighbors: float = 14
     max_ell: int = 3
-    hidden_irreps: tuple[str, ...] = ('128x0e + 64x1o + 32x2e', '128x0e + 64x1o + 32x2e')
-    species_embed_dim: int = 64
-    outs_per_node: int = 64
+    radial_mix: MLPConfig = field(default_factory=MLPConfig)
+
+    def build(self) -> SimpleMixMLPConv:
+        return SimpleMixMLPConv(
+            avg_num_neighbors=self.avg_num_neighbors,
+            max_ell=self.max_ell,
+            radial_mix=self.radial_mix.build(),
+        )
+
+
+@dataclass
+class InteractionConfig:
+    message: Union[SimpleMixMessageConfig] = field(default_factory=SimpleMixMessageConfig)
+
+
+@dataclass
+class SimpleInteractionBlockConfig(InteractionConfig):
+    kind: Const('simple') = 'simple'
+
+    def build(self) -> SimpleInteraction:
+        return SimpleInteraction(irreps_out=None, conv=self.inner_conv.build())
+
+
+@dataclass
+class NodeEmbeddingConfig:
+    embed_dim: int = 64
+
+    def build(self, num_species: int, elem_indices: Sequence[int]) -> LinearNodeEmbedding:
+        raise NotImplementedError
+
+
+@dataclass
+class LinearNodeEmbeddingConfig(NodeEmbeddingConfig):
+    kind: Const('linear') = 'linear'
+
+    def build(self, num_species: int, elem_indices: Sequence[int]) -> LinearNodeEmbedding:
+        return LinearNodeEmbedding(
+            f'{self.embed_dim}x0e', num_species=num_species, element_indices=jnp.array(elem_indices)
+        )
+
+
+@dataclass
+class ReadoutConfig:
+    pass
+
+
+@dataclass
+class LinearReadoutConfig(ReadoutConfig):
+    kind: Const('linear') = 'linear'
+
+    def build(self) -> LinearReadoutBlock:
+        return LinearReadoutBlock(irreps_out=None)
+
+
+@dataclass
+class SelfConnectionConfig:
+    pass
+
+
+@dataclass
+class MLPSelfGateConfig(SelfConnectionConfig):
+    kind: Const('mlp-gate') = 'mlp-gate'
+    num_hidden_layers: int = 1
+    mlp: MLPConfig = field(default_factory=MLPConfig)
+
+    def build(self) -> MLPSelfGate:
+        return MLPSelfGate(
+            irreps_out=None, num_hidden_layers=self.num_hidden_layers, mlp_templ=self.mlp.build()
+        )
+
+
+@dataclass
+class MACEConfig:
+    node_embed: Union[LinearNodeEmbeddingConfig] = field(default_factory=LinearNodeEmbeddingConfig)
+    edge_embed: RadialEmbeddingConfig = field(default_factory=RadialEmbeddingConfig)
+    interaction: Union[SimpleInteractionBlockConfig] = field(
+        default_factory=SimpleInteractionBlockConfig
+    )
+    readout: Union[LinearReadoutConfig] = field(default_factory=LinearReadoutConfig)
+    self_connection: Union[MLPSelfGateConfig] = field(default_factory=MLPSelfGateConfig)
     head: MLPConfig = field(default_factory=MLPConfig)
+
+    hidden_irreps: tuple[str, ...] = ('128x0e + 64x1o + 32x2e', '128x0e + 64x1o + 32x2e')
+    outs_per_node: int = 64
     interaction_reduction: str = 'last'
     share_species_embed: bool = True
 
@@ -346,27 +513,12 @@ class MACEConfig:
     ) -> MaceModel:
         return MaceModel(
             hidden_irreps=self.hidden_irreps,
-            # node_embedding=SevenNetEmbedding('32x0e'),
-            node_embedding=LinearNodeEmbedding(
-                f'{self.species_embed_dim}x0e',
-                num_species=num_species,
-                element_indices=jnp.array(elem_indices),
-            ),
-            edge_embedding=RadialEmbeddingBlock(
-                basis=OldBessel1DBasis(self.num_basis, r_max=self.r_max),
-                envelope=ExpCutoff(r_max=self.r_max, c=1, cutoff_start=0.6),
-                # envelope=PolynomialCutoff(r_max=self.r_max, p=6),
-            ),
-            interaction=InteractionBlock(
-                irreps_out=None,
-                conv=MessagePassingConvolution(
-                    avg_num_neighbors=self.avg_num_neighbors,
-                    max_ell=self.max_ell,
-                ),
-            ),
-            readout=LinearReadoutBlock(irreps_out=None),
+            node_embedding=self.node_embed.build(num_species, elem_indices),
+            edge_embedding=self.edge_embed.build(),
+            interaction=self.interaction.build(),
+            readout=self.readout.build(),
             head_templ=self.head.build(),
-            self_connection=MLPSelfGate(irreps_out=None),
+            self_connection=self.self_connection.build(),
             # self_connection=LinearSelfConnection(irreps_out=None),
             outs_per_node=self.outs_per_node,
             share_species_embed=self.share_species_embed,
@@ -381,7 +533,7 @@ class LossConfig:
     reg_loss: RegressionLossConfig = field(default_factory=RegressionLossConfig)
     energy_weight: float = 1
     force_weight: float = 0.1
-    stress_weight: float = 0.1
+    stress_weight: float = 0.01
 
     def regression_loss(self, preds, targets, mask):
         return self.reg_loss.regression_loss(preds, targets, mask)

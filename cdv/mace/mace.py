@@ -21,7 +21,7 @@ from cdv.mace.e3_layers import IrrepsModule, Linear, LinearReadoutBlock, Nonline
 from cdv.layers import SegmentReduction, SegmentReductionKind
 from cdv.layers import Context, E3NormNorm, LazyInMLP, E3Irreps, E3IrrepsArray, edge_vecs
 from cdv.mace.edge_embedding import BesselBasis, ExpCutoff, RadialEmbeddingBlock, GaussBasis
-from cdv.mace.message_passing import InteractionBlock
+from cdv.mace.message_passing import SimpleInteraction
 from cdv.mace.node_embedding import NodeEmbedding, SevenNetEmbedding
 from cdv.utils import debug_stat, debug_structure
 from cdv.mace.self_connection import (
@@ -54,7 +54,7 @@ class SpeciesWiseRescale(nn.Module):
 
 
 class MACELayer(nn.Module):
-    interaction: InteractionBlock
+    interaction: SimpleInteraction
     self_connection: SelfConnectionBlock
     readout: IrrepsModule | None
 
@@ -83,7 +83,7 @@ class MACE(IrrepsModule):
     hidden_irreps: Sequence[E3Irreps]
     node_embedding: NodeEmbedding
     radial_embedding: RadialEmbeddingBlock
-    interaction_templ: InteractionBlock
+    interaction_templ: SimpleInteraction
     self_connection_templ: SelfConnectionBlock
     readout_templ: IrrepsModule
     only_last_readout: bool
@@ -159,7 +159,7 @@ class MaceModel(nn.Module):
 
     node_embedding: NodeEmbedding
     edge_embedding: RadialEmbeddingBlock
-    interaction: InteractionBlock
+    interaction: SimpleInteraction
     self_connection: SelfConnectionBlock
     readout: IrrepsModule
     head_templ: LazyInMLP

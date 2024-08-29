@@ -49,19 +49,29 @@ schedule_free = false
 prodigy = false
 
 [mace]
-num_basis = 8
-r_max = 6
-avg_num_neighbors = 14
-max_ell = 3
 hidden_irreps = [ "128x0e + 64x1o + 32x2e", "128x0e + 64x1o + 32x2e",]
-node_out_dim = 64
+outs_per_node = 64
 interaction_reduction = "last"
 share_species_embed = true
 
 [train.loss]
 energy_weight = 1
 force_weight = 0.1
-stress_weight = 0.1
+stress_weight = 0.01
+
+[mace.node_embed]
+embed_dim = 64
+kind = "linear"
+
+[mace.interaction]
+kind = "simple"
+
+[mace.readout]
+kind = "linear"
+
+[mace.self_connection]
+kind = "mlp-gate"
+num_hidden_layers = 1
 
 [mace.head]
 inner_dims = []
@@ -74,3 +84,35 @@ num_heads = 1
 [train.loss.reg_loss]
 loss_delta = 0.015625
 use_rmse = false
+
+[mace.edge_embed.radial_basis]
+num_basis = 10
+r_max = 7
+kind = "bessel"
+freq_trainable = true
+
+[mace.edge_embed.envelope]
+kind = "exp"
+cutoff_start = 0.9
+c = 0.1
+
+[mace.interaction.message]
+kind = "simple-mix-mlp-conv"
+avg_num_neighbors = 14
+max_ell = 3
+
+[mace.self_connection.mlp]
+inner_dims = []
+activation = "swish"
+final_activation = "Identity"
+dropout = 0.0
+residual = false
+num_heads = 1
+
+[mace.interaction.message.radial_mix]
+inner_dims = []
+activation = "swish"
+final_activation = "Identity"
+dropout = 0.0
+residual = false
+num_heads = 1
