@@ -192,7 +192,7 @@ class TrainingRun:
         @ft.partial(jax.vmap, in_axes=(None, 0))
         def loss_fn(params, batch):
             if task == 'e_form':
-                preds = EFSWrapper()(
+                preds = config.efs_wrapper(
                     state.apply_fn, params, batch, ctx=Context(training=True), rngs=rng
                 )
                 loss = config.efs_loss(batch, preds)
@@ -234,7 +234,7 @@ class TrainingRun:
 
         def loss_fn(params, batch):
             if task == 'e_form':
-                preds = EFSWrapper()(
+                preds = config.efs_wrapper(
                     state.apply_fn, params, batch, ctx=Context(training=True), rngs=rng
                 )
                 loss = config.efs_loss(batch, preds)

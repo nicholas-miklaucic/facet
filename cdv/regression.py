@@ -26,6 +26,8 @@ class EFSOutput(PyTreeNode):
 
 
 class EFSWrapper(PyTreeNode):
+    compute_fs: bool = True
+
     def __call__(
         self, apply_fn: Callable, variables, cg: CrystalGraphs, *args, **kwargs
     ) -> EFSOutput:
@@ -43,9 +45,14 @@ class EFSWrapper(PyTreeNode):
             )
             return jnp.sum(energy, where=cg.padding_mask), energy
 
-        (fgrad, sgrad), energy = jax.grad(energy_fn, argnums=(0, 1), has_aux=True)(
-            cg.nodes.cart, cg.graph_data.lat
-        )
+        if self.compute_fs:
+            (fgrad, sgrad), energy = jax.grad(energy_fn, argnums=(0, 1), has_aux=True)(
+                cg.nodes.cart, cg.graph_data.lat
+            )
+        else:
+            energy_sum, energy = energy_fn(cg.nodes.cart, cg.graph_data.lat)
+            fgrad = cg.nodes.cart * 0
+            sgrad = cg.graph_data.lat * 0
 
         # https://github.com/MDIL-SNU/SevenNet/blob/afb56e10b6a27190f7c3ce25cbf666cf9175608e/sevenn/nn/force_output.py#L72
         # https://github.com/ACEsuit/mace/blob/575af0171369e2c19e04b115140b9901f83eb00c/mace/modules/utils.py#L60

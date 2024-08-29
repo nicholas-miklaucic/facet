@@ -32,7 +32,7 @@ from cdv.mace.mace import (
 from cdv.mace.message_passing import SimpleInteraction, SimpleMixMLPConv
 from cdv.mace.node_embedding import LinearNodeEmbedding, SevenNetEmbedding
 from cdv.mace.self_connection import LinearSelfConnection, MLPSelfGate
-from cdv.regression import EFSLoss
+from cdv.regression import EFSLoss, EFSWrapper
 from cdv.vae import VAE, Decoder, Encoder, LatticeVAE, PropertyPredictor
 
 pyrallis.set_config_type('toml')
@@ -540,6 +540,11 @@ class LossConfig:
 
     def regression_loss(self, preds, targets, mask):
         return self.reg_loss.regression_loss(preds, targets, mask)
+
+    @property
+    def efs_wrapper(self) -> EFSWrapper:
+        compute_fs = not (self.force_weight == 0 and self.stress_weight == 0)
+        return EFSWrapper(compute_fs=compute_fs)
 
     @property
     def efs_loss(self) -> EFSLoss:

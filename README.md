@@ -3,8 +3,9 @@ Working repository for diffusion and prediction models using MACE.
 
 ## To Do 
 - Maybe give a LR-free method another whirl?
-- Test state prediction needs to be parallelized
 - Only do tensor products we actually use!
+- Log actual GPU memory usage, optimize batch size
+- Write out plans for sweeping
 - Get a good baseline for future hyperparameter experimentation
 
 

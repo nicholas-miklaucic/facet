@@ -1,8 +1,8 @@
-batch_size = 32
+batch_size = 256
 stack_size = 1
 do_profile = false
 debug_mode = false
-num_epochs = 10
+num_epochs = 5
 display = "progress"
 regressor = "mace"
 task = "e_form"
@@ -13,7 +13,7 @@ shuffle_seed = 1618
 train_split = 30
 test_split = 3
 valid_split = 3
-batches_per_group = 800
+batches_per_group = 0
 
 [cli]
 verbosity = "info"
@@ -33,7 +33,7 @@ epochs_per_valid = 0.5
 [train]
 lr_schedule_kind = "cosine"
 start_lr_frac = 0.1
-base_lr = 4e-3
+base_lr = 5e-3
 end_lr_frac = 0.04
 weight_decay = 1e-3
 beta_1 = 0.9
@@ -46,8 +46,8 @@ prodigy = false
 
 [train.loss]
 energy_weight = 1
-force_weight = 0.1
-stress_weight = 0.01
+force_weight = 0
+stress_weight = 0
 
 [mace]
 hidden_irreps = ["64x0e + 32x1o + 16x2e", "64x0e + 32x1o + 16x2e", "128x0e"]
@@ -102,7 +102,7 @@ residual = false
 num_heads = 1
 
 [mace.interaction.message.radial_mix]
-inner_dims = []
+inner_dims = [64]
 activation = "swish"
 final_activation = "Identity"
 dropout = 0.3

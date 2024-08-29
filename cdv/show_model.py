@@ -47,7 +47,8 @@ def show_model(config: MainConfig, make_hlo_dot=False, do_profile=False, show_st
     # params = jax.device_put_replicated(params, config.device.devices())
 
     base_apply_fn = jax.vmap(
-        lambda p, b: EFSWrapper()(mod.apply, p, b, rngs=rngs, **kwargs), in_axes=(None, 0)
+        lambda p, b: config.train.loss.efs_wrapper(mod.apply, p, b, rngs=rngs, **kwargs),
+        in_axes=(None, 0),
     )
     apply_fn = jax.jit(base_apply_fn)
 
