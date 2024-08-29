@@ -129,7 +129,7 @@ class TrainingRun:
     def init_run(self) -> neptune.Run:
         run = neptune.init_run(
             mode='debug' if self.config.debug_mode else 'async',
-            tags=[self.config.task],
+            tags=[self.config.task] + self.config.log.tags,
             capture_stderr=False,
             capture_stdout=False,
             source_files='cdv/**/*.py',
@@ -171,6 +171,49 @@ class TrainingRun:
 
         state = state.replace(metrics=state.metrics.update(**metric_updates))
         return state
+
+    @staticmethod
+    @ft.partial(jax.jit, static_argnames=('task', 'config'))
+    @chex.assert_max_traces(5)
+    def test_preds(
+        task: str, config: LossConfig, state: TrainState, params, batch: CrystalGraphs, rng
+    ):
+        """Evaluate metrics for a single batch."""
+        rngs = {k: v for k, v in rng.items()} if isinstance(rng, dict) else {'params': rng}
+        rng = jax.random.fold_in(rngs['params'], state.step)
+
+        from jax.experimental import mesh_utils
+        from jax.experimental.shard_map import shard_map
+        from jax.sharding import Mesh, PartitionSpec as P
+
+        devs = jax.local_devices()
+        mesh = Mesh(mesh_utils.create_device_mesh(len(devs), devices=devs), 'batch')
+
+        @ft.partial(jax.vmap, in_axes=(None, 0))
+        def loss_fn(params, batch):
+            if task == 'e_form':
+                preds = EFSWrapper()(
+                    state.apply_fn, params, batch, ctx=Context(training=True), rngs=rng
+                )
+                loss = config.efs_loss(batch, preds)
+                return loss
+            else:
+                preds = state.apply_fn(params, batch, ctx=Context(training=True), rngs=rng)
+                return preds['loss'].mean(axis=-1), preds
+
+        @ft.partial(
+            shard_map,
+            mesh=mesh,
+            in_specs=(P(None), P('batch')),
+            out_specs=P('batch'),
+        )
+        def ploss_fn(params, batch):
+            loss = loss_fn(params, batch)
+            loss = jax.lax.pmean(loss, axis_name='batch')
+            return loss
+
+        loss = ploss_fn(params, batch)
+        return loss
 
     @staticmethod
     @ft.partial(jax.jit, static_argnames=('task', 'config'))
@@ -363,27 +406,14 @@ class TrainingRun:
             # Compute metrics on the test set after each training epoch
             self.test_state = self.eval_state.replace(metrics=Metrics())
             for _i, test_batch in zip(range(self.steps_in_test_epoch), self.test_dl):
-                if self.config.task == 'e_form':
-                    test_preds = jax.vmap(
-                        lambda p, b: self.config.train.loss.efs_loss(
-                            b,
-                            EFSWrapper()(
-                                self.test_state.apply_fn,
-                                p,
-                                b,
-                                ctx=Context(training=False),
-                                rngs=self.rng,
-                            ),
-                        ),
-                        in_axes=(None, 0),
-                    )(self.test_state.params, test_batch)
-                else:
-                    test_preds = jax.vmap(
-                        lambda p, b: self.test_state.apply_fn(
-                            p, b, ctx=Context(training=False), rngs=self.rng
-                        ),
-                        in_axes=(None, 0),
-                    )(self.test_state.params, test_batch)
+                test_preds = TrainingRun.test_preds(
+                    self.config.task,
+                    self.config.train.loss,
+                    self.test_state,
+                    self.test_state.params,
+                    test_batch,
+                    self.rng,
+                )
 
                 self.test_state = self.compute_metrics(
                     task=self.config.task,
@@ -441,7 +471,7 @@ class TrainingRun:
 
     @property
     def should_validate(self):
-        return (self.curr_step + 1) % (
+        return (self.curr_step + 1) % round(
             self.config.log.epochs_per_valid * self.steps_in_epoch
         ) == 0 or self.is_last_step
 

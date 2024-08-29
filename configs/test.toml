@@ -1,9 +1,9 @@
 batch_size = 32
 stack_size = 1
 do_profile = false
-debug_mode = true
+debug_mode = false
 num_epochs = 10
-display = "dashboard"
+display = "progress"
 regressor = "mace"
 task = "e_form"
 
@@ -13,7 +13,7 @@ shuffle_seed = 1618
 train_split = 30
 test_split = 3
 valid_split = 3
-batches_per_group = 50
+batches_per_group = 800
 
 [cli]
 verbosity = "info"
@@ -26,16 +26,16 @@ gpu_ids = [0, 1, 2]
 
 [log]
 log_dir = "logs"
-logs_per_epoch = 8
+logs_per_epoch = 16
 epochs_per_ckpt = 2
-epochs_per_valid = 2
+epochs_per_valid = 0.5
 
 [train]
 lr_schedule_kind = "cosine"
 start_lr_frac = 0.1
 base_lr = 4e-3
 end_lr_frac = 0.04
-weight_decay = 1e-8
+weight_decay = 1e-3
 beta_1 = 0.9
 beta_2 = 0.999
 nestorov = true
@@ -50,7 +50,7 @@ force_weight = 0.1
 stress_weight = 0.01
 
 [mace]
-hidden_irreps = ["128x0e + 64x1o + 32x2e", "256x0e"]
+hidden_irreps = ["64x0e + 32x1o + 16x2e", "64x0e + 32x1o + 16x2e", "128x0e"]
 outs_per_node = 64
 interaction_reduction = "last"
 share_species_embed = true
@@ -70,7 +70,7 @@ kind = "mlp-gate"
 num_hidden_layers = 1
 
 [mace.head]
-inner_dims = []
+inner_dims = [64]
 activation = "swish"
 final_activation = "Identity"
 dropout = 0.3
@@ -78,7 +78,7 @@ residual = false
 num_heads = 1
 
 [mace.edge_embed.radial_basis]
-num_basis = 8
+num_basis = 10
 r_max = 6
 kind = "bessel"
 freq_trainable = true
@@ -86,18 +86,18 @@ freq_trainable = true
 [mace.edge_embed.envelope]
 kind = "exp"
 cutoff_start = 0.8
-c = 1
+c = 0.1
 
 [mace.interaction.message]
 kind = "simple-mix-mlp-conv"
 avg_num_neighbors = 14
-max_ell = 2
+max_ell = 3
 
 [mace.self_connection.mlp]
 inner_dims = []
 activation = "swish"
 final_activation = "Identity"
-dropout = 0
+dropout = 0.3
 residual = false
 num_heads = 1
 
@@ -105,6 +105,6 @@ num_heads = 1
 inner_dims = []
 activation = "swish"
 final_activation = "Identity"
-dropout = 0.0
+dropout = 0.3
 residual = false
 num_heads = 1

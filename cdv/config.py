@@ -51,7 +51,10 @@ class LogConfig:
     epochs_per_ckpt: int = 2
 
     # Test every n epochs:
-    epochs_per_valid: int = 2
+    epochs_per_valid: float = 2
+
+    # Neptune tags.
+    tags: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -593,7 +596,7 @@ class TrainingConfig:
             base_lr = self.base_lr
             if self.prodigy:
                 base_lr = 1
-            warmup_steps = steps_in_epoch * min(5, num_epochs // 2)
+            warmup_steps = steps_in_epoch * min(1, num_epochs // 2)
             return optax.warmup_cosine_decay_schedule(
                 init_value=base_lr * self.start_lr_frac,
                 peak_value=base_lr,

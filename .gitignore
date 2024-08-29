@@ -1,6 +1,9 @@
 # profile data
 *.nsys-rep
 
+# neptune data
+.neptune/*
+
 # secrets file
 secrets.sh
 
