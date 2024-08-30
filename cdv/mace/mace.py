@@ -57,6 +57,7 @@ class MACELayer(nn.Module):
     interaction: SimpleInteraction
     self_connection: SelfConnectionBlock
     readout: IrrepsModule | None
+    residual: bool
 
     @nn.compact
     def __call__(
@@ -71,7 +72,12 @@ class MACELayer(nn.Module):
     ):
         """-> (n_nodes output_irreps, n_nodes features*hidden_irreps)"""
         x = self.interaction(vectors, node_feats, radial_embedding, receivers, ctx=ctx)
+        if self.residual:
+            resid = Linear(x.irreps, force_irreps_out=True)(node_feats)
+            # debug_stat(resid=resid, x=x)
+            x = x + resid
         x = self.self_connection(x, node_species, species_embed, ctx)
+
         if self.readout is not None:
             readout = self.readout(x, ctx=ctx)
             return x, readout
@@ -88,6 +94,7 @@ class MACE(IrrepsModule):
     readout_templ: IrrepsModule
     only_last_readout: bool
     share_species_embed: bool
+    residual: bool
 
     def setup(self):
         layers = []
@@ -95,8 +102,14 @@ class MACE(IrrepsModule):
             ir_out = E3Irreps(ir_out)
             last = i == len(self.hidden_irreps)
 
-            interaction = self.interaction_templ.copy(irreps_out=ir_out)
             self_connection = self.self_connection_templ.copy(irreps_out=ir_out)
+
+            # jax.debug.print(
+            #     'irreps = {}, true_irreps = {}',
+            #     self_connection.irreps_in(),
+            #     self_connection.ir_out,
+            # )
+            interaction = self.interaction_templ.copy(irreps_out=self_connection.irreps_in())
 
             if last or not self.only_last_readout:
                 readout = self.readout_templ.copy(irreps_out=self.ir_out)
@@ -108,6 +121,7 @@ class MACE(IrrepsModule):
                     interaction=interaction,
                     self_connection=self_connection,
                     readout=readout,
+                    residual=self.residual,
                     name=f'layer_{i}',
                 )
             )
@@ -163,6 +177,7 @@ class MaceModel(nn.Module):
     self_connection: SelfConnectionBlock
     readout: IrrepsModule
     head_templ: LazyInMLP
+    residual: bool
 
     outs_per_node: int
     share_species_embed: bool = True
@@ -182,6 +197,7 @@ class MaceModel(nn.Module):
             readout_templ=self.readout,
             only_last_readout=self.interaction_reduction == 'last',
             share_species_embed=self.share_species_embed,
+            residual=self.residual,
         )
 
         self.rescale = SpeciesWiseRescale()

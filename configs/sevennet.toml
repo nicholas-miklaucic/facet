@@ -1,24 +1,19 @@
-batch_size = 32
+batch_size = 256
 stack_size = 1
 do_profile = false
-num_epochs = 20
 debug_mode = false
-display = "dashboard"
+num_epochs = 8
+display = "progress"
 regressor = "mace"
 task = "e_form"
 
 [data]
 dataset_name = "mptrj"
-raw_data_folder = "data"
-data_folder = "precomputed"
 shuffle_seed = 1618
 train_split = 30
 test_split = 3
 valid_split = 3
 batches_per_group = 0
-batch_n_nodes = 1024
-k = 16
-batch_n_graphs = 32
 
 [cli]
 verbosity = "info"
@@ -26,43 +21,48 @@ show_progress = true
 
 [device]
 device = "gpu"
-max_gpus = 0
-gpu_ids = []
+max_gpus = 3
+gpu_ids = [0, 1, 2]
 
 [log]
 log_dir = "logs"
-logs_per_epoch = 8
-epochs_per_ckpt = 2
-epochs_per_valid = 2
-tags = []
+logs_per_epoch = 16
+epochs_per_ckpt = 4
+epochs_per_valid = 0.5
 
 [train]
 lr_schedule_kind = "cosine"
 start_lr_frac = 0.1
-base_lr = 0.004
+base_lr = 1e-3
 end_lr_frac = 0.04
-weight_decay = 0.03
+weight_decay = 0
 beta_1 = 0.9
 beta_2 = 0.999
-nestorov = true
+nestorov = false
 max_grad_norm = 3.0
 schedule_free = false
 prodigy = false
 
-[mace]
-residual = false
-hidden_irreps = [ "128x0e + 64x1o + 32x2e", "128x0e + 64x1o + 32x2e",]
-outs_per_node = 64
-interaction_reduction = "last"
-share_species_embed = true
 
 [train.loss]
 energy_weight = 1
-force_weight = 0.1
-stress_weight = 0.01
+force_weight = 0
+stress_weight = 0
+
+[mace]
+hidden_irreps = [
+    "128x0e + 64x1e + 32x2e",
+    "128x0e + 64x1e + 32x2e",
+    "128x0e + 64x1e + 32x2e",
+    # "128x0e + 64x1e + 32x2e",
+]
+outs_per_node = 128
+interaction_reduction = "last"
+share_species_embed = true
+residual = true
 
 [mace.node_embed]
-embed_dim = 64
+embed_dim = 128
 kind = "linear"
 
 [mace.interaction]
@@ -75,37 +75,33 @@ kind = "linear"
 kind = "gate"
 
 [mace.head]
-inner_dims = []
+inner_dims = [32, 32]
 activation = "swish"
 final_activation = "Identity"
-dropout = 0.0
+dropout = 0.5
 residual = false
 num_heads = 1
 
-[train.loss.reg_loss]
-loss_delta = 0.015625
-use_rmse = false
-
 [mace.edge_embed.radial_basis]
-num_basis = 10
-r_max = 7
+num_basis = 8
+r_max = 5
 kind = "bessel"
 freq_trainable = true
 
 [mace.edge_embed.envelope]
 kind = "exp"
-cutoff_start = 0.9
+cutoff_start = 0.8
 c = 0.1
 
 [mace.interaction.message]
-kind = "simple-mix-mlp-conv"
+kind = "sevennet-conv"
 avg_num_neighbors = 14
-max_ell = 3
+max_ell = 2
 
-[mace.interaction.message.radial_mix]
-inner_dims = []
+[mace.interaction.message.radial_weight]
+inner_dims = [64, 64]
 activation = "swish"
 final_activation = "Identity"
-dropout = 0.0
+dropout = 0.3
 residual = false
 num_heads = 1

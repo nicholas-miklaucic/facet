@@ -4,13 +4,32 @@ from cdv.mace.e3_layers import E3Irreps, E3IrrepsArray, IrrepsModule, Linear
 import jax.numpy as jnp
 import e3nn_jax as e3nn
 from cdv.layers import Context, LazyInMLP
-from cdv.utils import debug_structure
+from cdv.utils import debug_stat, debug_structure
+import jax
 
 
-class SimpleMixMLPConv(nn.Module):
+class MPConv(IrrepsModule):
     avg_num_neighbors: float
     max_ell: int
-    radial_mix: LazyInMLP
+
+    def __call__(
+        self,
+        vectors: E3IrrepsArray,  # [n_nodes, k, 3]
+        node_feats: E3IrrepsArray,  # [n_nodes, irreps]
+        radial_embedding: E3IrrepsArray,  # [n_nodes, k, radial_embedding_dim]
+        receivers: jnp.ndarray,  # [n_nodes, k]
+        ctx: Context,
+    ) -> E3IrrepsArray:
+        raise NotImplementedError
+
+
+class SevenNetConv(MPConv):
+    """Sevennet message passing."""
+
+    # https://github.com/MDIL-SNU/SevenNet/blob/9c59ecebbae3e804bba1d19210e8af9499783e32/sevenn/nn/convolution.py#L47
+
+    radial_weight: LazyInMLP
+    use_lin_sh: bool
 
     @nn.compact
     def __call__(
@@ -24,6 +43,58 @@ class SimpleMixMLPConv(nn.Module):
         """-> n_nodes irreps"""
         assert node_feats.ndim == 2
 
+        messages_broadcast = node_feats[
+            jnp.repeat(jnp.arange(node_feats.shape[0])[..., None], 1, axis=-1)
+        ]
+        # debug_structure(msgs=messages, vecs=vectors)
+
+        inner_irreps = list(e3nn.Irrep.iterator(self.max_ell))
+
+        if self.use_lin_sh:
+            full_msg = e3nn.tensor_product_with_spherical_harmonics(
+                messages_broadcast, vectors, self.max_ell
+            )
+
+        else:
+            full_msg = e3nn.tensor_product(
+                messages_broadcast,
+                e3nn.spherical_harmonics(range(1, self.max_ell + 1), vectors, True),
+                filter_ir_out=inner_irreps,
+            )
+
+        lin_msg = Linear(self.ir_out)(full_msg).regroup()
+
+        radial = self.radial_weight.copy(out_dim=lin_msg.irreps.num_irreps)(radial_embedding, ctx)
+
+        # debug_structure(messages=messages, mix=radial, rad=radial_embedding.array)
+        # debug_stat(messages=messages.array, mix=mix.array, rad=radial_embedding.array)
+        # radial = nn.sigmoid(radial.array)
+        # radial = nn.tanh(radial.array)
+        messages = lin_msg * radial
+
+        # debug_stat(messages=messages, radial=radial)
+
+        zeros = E3IrrepsArray.zeros(messages.irreps, node_feats.shape[:1], messages.dtype)
+        # TODO flip this perhaps?
+        node_feats = zeros.at[receivers].add(messages)  # [n_nodes, irreps]
+        node_feats = node_feats / self.avg_num_neighbors
+
+        return node_feats
+
+
+class SimpleMixMLPConv(MPConv):
+    radial_mix: LazyInMLP
+
+    @nn.compact
+    def __call__(
+        self,
+        vectors: E3IrrepsArray,  # [n_nodes, k, 3]
+        node_feats: E3IrrepsArray,  # [n_nodes, irreps]
+        radial_embedding: E3IrrepsArray,  # [n_nodes, k, radial_embedding_dim]
+        receivers: jnp.ndarray,  # [n_nodes, k]
+        ctx: Context,
+    ) -> E3IrrepsArray:
+        """-> n_nodes irreps"""
         messages_broadcast = node_feats[
             jnp.repeat(jnp.arange(node_feats.shape[0])[..., None], 16, axis=-1)
         ]
@@ -68,7 +139,7 @@ class SimpleMixMLPConv(nn.Module):
 
 
 class SimpleInteraction(IrrepsModule):
-    conv: SimpleMixMLPConv
+    conv: MPConv
 
     @nn.compact
     def __call__(
@@ -80,9 +151,13 @@ class SimpleInteraction(IrrepsModule):
         ctx: Context,
     ) -> tuple[E3IrrepsArray, E3IrrepsArray]:
         """-> n_nodes irreps"""
-        new_node_feats = node_feats
-        new_node_feats = self.conv(vectors, new_node_feats, radial_embedding, receivers, ctx)
-        new_node_feats = Linear(self.ir_out, name='linear_down')(new_node_feats)
+        new_node_feats = Linear(node_feats.irreps, name='linear_intro')(node_feats)
+        new_node_feats = self.conv.copy(irreps_out=self.ir_out)(
+            vectors, new_node_feats, radial_embedding, receivers, ctx
+        )
+        new_node_feats = Linear(self.ir_out, name='linear_outro', force_irreps_out=True)(
+            new_node_feats
+        )
 
         return new_node_feats  # [n_nodes, target_irreps]
 

@@ -286,6 +286,12 @@ class Bessel2DBasis(nn.Module):
         )
 
 
+def shifted_softplus(x):
+    """Shifted softplus activation used for SevenNet weight neural network.
+    Not sure why. Equal to softplus(x) - log 2"""
+    return jax.nn.softplus(x) - jnp.log(2.0)
+
+
 # def soft_envelope(length, max_length):
 #     return e3nn.soft_envelope(
 #         length,

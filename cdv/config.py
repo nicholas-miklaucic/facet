@@ -29,9 +29,9 @@ from cdv.mace.edge_embedding import (
 from cdv.mace.mace import (
     MaceModel,
 )
-from cdv.mace.message_passing import SimpleInteraction, SimpleMixMLPConv
+from cdv.mace.message_passing import SevenNetConv, SimpleInteraction, SimpleMixMLPConv
 from cdv.mace.node_embedding import LinearNodeEmbedding, SevenNetEmbedding
-from cdv.mace.self_connection import LinearSelfConnection, MLPSelfGate
+from cdv.mace.self_connection import GateSelfConnection, LinearSelfConnection, MLPSelfGate
 from cdv.regression import EFSLoss, EFSWrapper
 from cdv.vae import VAE, Decoder, Encoder, LatticeVAE, PropertyPredictor
 
@@ -288,7 +288,7 @@ class Layer:
                     # something like relu
                     return layer
 
-        msg = f'Could not find {self.name} in flax.linen or avid.layers'
+        msg = f'Could not find {self.name} in flax.linen or cdv.layers'
         raise ValueError(msg)
 
 
@@ -426,6 +426,7 @@ class SimpleMixMessageConfig(MessageConfig):
 
     def build(self) -> SimpleMixMLPConv:
         return SimpleMixMLPConv(
+            irreps_out=None,
             avg_num_neighbors=self.avg_num_neighbors,
             max_ell=self.max_ell,
             radial_mix=self.radial_mix.build(),
@@ -433,8 +434,30 @@ class SimpleMixMessageConfig(MessageConfig):
 
 
 @dataclass
+class SevenNetConvConfig(MessageConfig):
+    kind: Const('sevennet-conv') = 'sevennet-conv'
+    avg_num_neighbors: float = 14
+    max_ell: int = 2
+    radial_weight: MLPConfig = field(
+        default_factory=lambda: MLPConfig(inner_dims=[64, 64], final_activation='shifted_softplus')
+    )
+    use_lin_sh: bool = False
+
+    def build(self) -> SevenNetConv:
+        return SevenNetConv(
+            irreps_out=None,
+            avg_num_neighbors=self.avg_num_neighbors,
+            max_ell=self.max_ell,
+            radial_weight=self.radial_weight.build(),
+            use_lin_sh=self.use_lin_sh,
+        )
+
+
+@dataclass
 class InteractionConfig:
-    message: Union[SimpleMixMessageConfig] = field(default_factory=SimpleMixMessageConfig)
+    message: Union[SimpleMixMessageConfig, SevenNetConvConfig] = field(
+        default_factory=SimpleMixMessageConfig
+    )
 
 
 @dataclass
@@ -482,6 +505,14 @@ class SelfConnectionConfig:
 
 
 @dataclass
+class GateConfig(SelfConnectionConfig):
+    kind: Const('gate') = 'gate'
+
+    def build(self) -> GateSelfConnection:
+        return GateSelfConnection(irreps_out=None)
+
+
+@dataclass
 class MLPSelfGateConfig(SelfConnectionConfig):
     kind: Const('mlp-gate') = 'mlp-gate'
     num_hidden_layers: int = 1
@@ -501,9 +532,10 @@ class MACEConfig:
         default_factory=SimpleInteractionBlockConfig
     )
     readout: Union[LinearReadoutConfig] = field(default_factory=LinearReadoutConfig)
-    self_connection: Union[MLPSelfGateConfig] = field(default_factory=MLPSelfGateConfig)
+    self_connection: Union[GateConfig, MLPSelfGateConfig] = field(default_factory=GateConfig)
     head: MLPConfig = field(default_factory=MLPConfig)
 
+    residual: bool = False
     hidden_irreps: tuple[str, ...] = ('128x0e + 64x1o + 32x2e', '128x0e + 64x1o + 32x2e')
     outs_per_node: int = 64
     interaction_reduction: str = 'last'
@@ -526,6 +558,7 @@ class MACEConfig:
             outs_per_node=self.outs_per_node,
             share_species_embed=self.share_species_embed,
             interaction_reduction=self.interaction_reduction,
+            residual=self.residual,
         )
 
 

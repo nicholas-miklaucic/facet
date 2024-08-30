@@ -30,6 +30,11 @@ reduced_tensor_product_basis = e3nn.reduced_tensor_product_basis
 class SelfConnectionBlock(IrrepsModule):
     """Block for node updates, combining species and environment information."""
 
+    @nn.nowrap
+    def irreps_in(self) -> E3Irreps:
+        """Gets the irreps that should be input in order to get the right output."""
+        return self.ir_out
+
     @nn.compact
     def __call__(
         self,
@@ -249,6 +254,23 @@ class LinearSelfConnection(SelfConnectionBlock):
     ):
         linear_out = Linear(self.irreps_out)
         return linear_out(node_feats)
+
+
+class GateSelfConnection(SelfConnectionBlock):
+    @nn.nowrap
+    def irreps_in(self) -> E3Irreps:
+        non_scalars = self.ir_out.filter(drop=['0e', '0o']).num_irreps
+        return self.ir_out + E3Irreps(f'{non_scalars}x0e')
+
+    @nn.compact
+    def __call__(
+        self,
+        node_feats: E3IrrepsArray,  # [n_nodes, feature * irreps]
+        node_specie: jnp.ndarray,  # [n_nodes, ] int
+        species_embed: Float[Array, 'num_species embed_dim'],
+        ctx: Context,
+    ):
+        return e3nn.gate(node_feats, even_act=jax.nn.silu, odd_act=jax.nn.tanh)
 
 
 class MLPSelfGate(SelfConnectionBlock):
