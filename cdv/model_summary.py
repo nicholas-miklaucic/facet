@@ -23,7 +23,7 @@ def model_summary(config: MainConfig, write_to_file: bool = False, print_summary
     if print_summary:
         print(output)
     conv = ansi2html.Ansi2HTMLConverter(
-        scheme='dracula', title='Model Summary', dark_bg=True, font_size='large'
+        scheme='dracula', title='Model Summary', dark_bg=True, font_size='normal'
     )
     html = conv.convert(output)
     if write_to_file:

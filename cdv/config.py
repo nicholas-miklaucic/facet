@@ -317,6 +317,9 @@ class MLPConfig:
     # Number of heads, for equivariant layer.
     num_heads: int = 1
 
+    # Whether to use a bias. Also applies to LayerNorm.
+    use_bias: bool = False
+
     def build(self) -> LazyInMLP:
         """Builds the head from the config."""
         return LazyInMLP(
@@ -326,6 +329,7 @@ class MLPConfig:
             final_act=Layer(self.final_activation).build(),
             dropout_rate=self.dropout,
             residual=self.residual,
+            use_bias=self.use_bias,
         )
 
 
@@ -368,7 +372,7 @@ class GaussBasisConfig(RadialBasisConfig):
     kind: Const('gauss') = 'gauss'
     sd: float = 1
 
-    def build(self) -> BesselBasis:
+    def build(self) -> GaussBasis:
         return GaussBasis(self.num_basis, self.r_max, self.sd)
 
 
@@ -439,17 +443,32 @@ class SevenNetConvConfig(MessageConfig):
     avg_num_neighbors: float = 14
     max_ell: int = 2
     radial_weight: MLPConfig = field(
-        default_factory=lambda: MLPConfig(inner_dims=[64, 64], final_activation='shifted_softplus')
+        default_factory=lambda: MLPConfig(
+            inner_dims=[64, 64],
+            final_activation='shifted_softplus',
+            out_dim=0,
+            use_bias=False,
+        )
     )
-    use_lin_sh: bool = False
 
     def build(self) -> SevenNetConv:
+        if Layer(self.radial_weight.activation).build()(0.0) != 0:
+            raise ValueError('Activation for radial MLP must go through origin.')
+
+        if (
+            self.radial_weight.final_activation == 'Identity'
+            or Layer(self.radial_weight.final_activation).build()(0.0) != 0
+        ):
+            raise ValueError('Final activation for radial MLP must go through origin.')
+
+        if self.radial_weight.use_bias:
+            raise ValueError('Radial MLP cannot use bias.')
+
         return SevenNetConv(
             irreps_out=None,
             avg_num_neighbors=self.avg_num_neighbors,
             max_ell=self.max_ell,
             radial_weight=self.radial_weight.build(),
-            use_lin_sh=self.use_lin_sh,
         )
 
 

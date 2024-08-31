@@ -90,12 +90,13 @@ class LazyInMLP(nn.Module):
     inner_dims: Sequence[int]
     out_dim: Optional[int] = None
     residual: bool = False
-    inner_act: Callable = nn.gelu
+    inner_act: Callable = nn.silu
     final_act: Callable = Identity()
     dropout_rate: float = 0.0
     kernel_init: Callable = nn.initializers.glorot_normal()
     bias_init: Callable = nn.initializers.truncated_normal()
     normalization: Literal['layer', 'weight', 'none'] = 'layer'
+    use_bias: bool = True
 
     @tcheck
     @nn.compact
@@ -116,9 +117,11 @@ class LazyInMLP(nn.Module):
             out_dim = self.out_dim
 
         if self.normalization == 'weight':
-            Dense = lambda *args, **kwargs: nn.WeightNorm(nn.Dense(*args, **kwargs))
+            Dense = lambda *args, **kwargs: nn.WeightNorm(
+                nn.Dense(*args, use_bias=self.use_bias, **kwargs)
+            )
         else:
-            Dense = nn.Dense
+            Dense = lambda *args, **kwargs: nn.Dense(*args, use_bias=self.use_bias, **kwargs)
 
         for next_dim in self.inner_dims:
             x = Dense(
@@ -127,7 +130,7 @@ class LazyInMLP(nn.Module):
             x = self.inner_act(x)
             x = nn.Dropout(self.dropout_rate, deterministic=not ctx.training)(x)
             if self.normalization == 'layer':
-                x = nn.LayerNorm(dtype=x.dtype)(x)
+                x = nn.LayerNorm(dtype=x.dtype, use_bias=self.use_bias)(x)
             _curr_dim = next_dim
 
         x = nn.Dense(
