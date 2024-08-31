@@ -65,6 +65,10 @@ stress_weight = 0.01
 embed_dim = 64
 kind = "linear"
 
+[mace.edge_embed]
+r_max = 5
+r_max_trainable = false
+
 [mace.interaction]
 kind = "simple"
 
@@ -81,6 +85,7 @@ final_activation = "Identity"
 dropout = 0.0
 residual = false
 num_heads = 1
+use_bias = false
 
 [train.loss.reg_loss]
 loss_delta = 0.015625
@@ -88,7 +93,6 @@ use_rmse = false
 
 [mace.edge_embed.radial_basis]
 num_basis = 10
-r_max = 7
 kind = "bessel"
 freq_trainable = true
 
@@ -109,3 +113,4 @@ final_activation = "Identity"
 dropout = 0.0
 residual = false
 num_heads = 1
+use_bias = false

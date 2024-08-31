@@ -13,28 +13,40 @@ class RadialBasis(nn.Module):
 
     num_basis: int
 
-    def __call__(self, x: Float[Array, '*batch'], ctx: Context) -> Float[Array, '*batch num_basis']:
+    def __call__(
+        self, x: Float[Array, '*batch'], r_max, ctx: Context
+    ) -> Float[Array, '*batch num_basis']:
         raise NotImplementedError
 
 
 class Envelope(nn.Module):
     """Cutoff function that goes to 0 at r_max."""
 
-    r_max: float
-
-    def __call__(self, x: Float[Array, '*batch'], ctx: Context) -> Float[Array, '*batch']:
+    def __call__(self, x: Float[Array, '*batch'], r_max, ctx: Context) -> Float[Array, '*batch']:
         raise NotImplementedError
 
 
 class RadialEmbeddingBlock(nn.Module):
+    r_max: float
+    r_max_trainable: bool
     basis: RadialBasis
     envelope: Envelope
 
-    @nn.compact
+    def setup(self):
+        if self.r_max_trainable:
+            self.param_rmax = self.param(
+                'rmax', nn.initializers.constant(self.r_max), (), jnp.float32
+            )
+        else:
+            self.param_rmax = self.r_max
+
     def __call__(self, edge_lengths: Float[Array, '*batch'], ctx: Context) -> E3IrrepsArray:
         """*batch -> *batch num_basis"""
 
-        embedding = self.basis(edge_lengths, ctx) * self.envelope(edge_lengths, ctx)[..., None]
+        embedding = (
+            self.basis(edge_lengths, self.param_rmax, ctx)
+            * self.envelope(edge_lengths, self.param_rmax, ctx)[..., None]
+        )
 
         return E3IrrepsArray(f'{embedding.shape[-1]}x0e', embedding)
 
@@ -42,11 +54,11 @@ class RadialEmbeddingBlock(nn.Module):
 class GaussBasis(RadialBasis):
     """Uses equispaced Gaussian RBFs, as in coGN."""
 
-    r_max: float
+    mu_max: float
     sd: float = 1.0
 
     def setup(self):
-        self.locs = jnp.linspace(0, self.r_max, self.num_basis)
+        self.locs = jnp.linspace(0, self.mu_max, self.num_basis)
 
     def __call__(self, d: Float[Array, ' *batch'], ctx: Context) -> Float[Array, '*batch emb']:
         z = d[..., None] - self.locs
@@ -57,7 +69,6 @@ class GaussBasis(RadialBasis):
 class BesselBasis(RadialBasis):
     """Uses spherical Bessel functions with a cutoff, as in DimeNet++."""
 
-    r_max: float
     freq_trainable: bool = True
 
     def setup(self):
@@ -69,8 +80,8 @@ class BesselBasis(RadialBasis):
         else:
             self.freq = freq_init(None)
 
-    def __call__(self, x, ctx: Context):
-        dist = x[..., None] / self.r_max
+    def __call__(self, x, r_max, ctx: Context):
+        dist = x[..., None] / r_max
 
         # e(d) = sqrt(2/c) * sin(fπd/c)/d
         # we use sinc so it's defined at 0
@@ -78,11 +89,7 @@ class BesselBasis(RadialBasis):
         # e(d) = sqrt(2/c) * sin(πfd/c)/(fd/c) * f/c
         # e(d) = sqrt(2/c) * sinc(πfd/c)) * πf/c
 
-        e_d = (
-            jnp.sqrt(2 / self.r_max)
-            * jnp.sinc(self.freq * dist)
-            * (jnp.pi * self.freq / self.r_max)
-        )
+        e_d = jnp.sqrt(2 / r_max) * jnp.sinc(self.freq * dist) * (jnp.pi * self.freq / r_max)
 
         # debug_stat(e_d=e_d, env=env, dist=dist)
         return e_d
@@ -94,12 +101,12 @@ class PolynomialCutoff(Envelope):
     p: float = 6
 
     @nn.compact
-    def __call__(self, x: Float[Array, '*batch'], ctx: Context) -> Float[Array, '*batch']:
+    def __call__(self, x: Float[Array, '*batch'], r_max, ctx: Context) -> Float[Array, '*batch']:
         envelope = (
             1.0
-            - ((self.p + 1.0) * (self.p + 2.0) / 2.0) * jnp.pow(x / self.r_max, self.p)
-            + self.p * (self.p + 2.0) * jnp.pow(x / self.r_max, self.p + 1)
-            - (self.p * (self.p + 1.0) / 2) * jnp.pow(x / self.r_max, self.p + 2)
+            - ((self.p + 1.0) * (self.p + 2.0) / 2.0) * jnp.pow(x / r_max, self.p)
+            + self.p * (self.p + 2.0) * jnp.pow(x / r_max, self.p + 1)
+            - (self.p * (self.p + 1.0) / 2) * jnp.pow(x / r_max, self.p + 2)
         )
 
         return envelope * (x < self.r_max)
@@ -120,9 +127,9 @@ class ExpCutoff(Envelope):
     cutoff_start: float = 0.6
 
     @nn.compact
-    def __call__(self, x: Float[Array, '*batch'], ctx: Context) -> Float[Array, '*batch']:
-        r_on = self.cutoff_start * self.r_max
-        t = jnp.clip((x - r_on) / (self.r_max - r_on), 0, 1)
+    def __call__(self, x: Float[Array, '*batch'], r_max, ctx: Context) -> Float[Array, '*batch']:
+        r_on = self.cutoff_start * r_max
+        t = jnp.clip((x - r_on) / (r_max - r_on), 0, 1)
 
         def exp_func(x):
             return jnp.expm1(x * self.c) / jnp.expm1(self.c) * x * x * jnp.sin(jnp.pi * x / 2)

@@ -72,7 +72,7 @@ class SevenNetConv(MPConv):
         # edge_sh is not given in this interface: perhaps that should be cached? is it memory-bound
         # or FLOP-bound?
         edge_sh = e3nn.spherical_harmonics(
-            e3nn.Irreps.spherical_harmonics(self.max_ell, p=-1), vectors, normalize=True
+            e3nn.Irreps.spherical_harmonics(self.max_ell, p=1), vectors, normalize=True
         )
 
         # map node features onto edges for tp

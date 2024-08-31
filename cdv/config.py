@@ -361,7 +361,6 @@ def Const(val) -> type[Constant]:
 @dataclass
 class RadialBasisConfig:
     num_basis: int = 10
-    r_max: float = 7
 
     def build(self) -> RadialBasis:
         raise NotImplementedError()
@@ -370,10 +369,11 @@ class RadialBasisConfig:
 @dataclass
 class GaussBasisConfig(RadialBasisConfig):
     kind: Const('gauss') = 'gauss'
+    mu_max: float = 7
     sd: float = 1
 
     def build(self) -> GaussBasis:
-        return GaussBasis(self.num_basis, self.r_max, self.sd)
+        return GaussBasis(self.num_basis, self.mu_max, self.sd)
 
 
 @dataclass
@@ -382,14 +382,12 @@ class BesselBasisConfig(RadialBasisConfig):
     freq_trainable: bool = True
 
     def build(self) -> BesselBasis:
-        return BesselBasis(
-            num_basis=self.num_basis, r_max=self.r_max, freq_trainable=self.freq_trainable
-        )
+        return BesselBasis(num_basis=self.num_basis, freq_trainable=self.freq_trainable)
 
 
 @dataclass
 class EnvelopeConfig:
-    def build(self, r_max: float) -> Envelope:
+    def build(self) -> Envelope:
         raise NotImplementedError
 
 
@@ -399,12 +397,14 @@ class ExpCutoffConfig:
     cutoff_start: float = 0.9
     c: float = 0.1
 
-    def build(self, r_max: float) -> ExpCutoff:
-        return ExpCutoff(r_max=r_max, c=self.c, cutoff_start=self.cutoff_start)
+    def build(self) -> ExpCutoff:
+        return ExpCutoff(c=self.c, cutoff_start=self.cutoff_start)
 
 
 @dataclass
 class RadialEmbeddingConfig:
+    r_max: float = 5
+    r_max_trainable: bool = False
     radial_basis: Union[GaussBasisConfig, BesselBasisConfig] = field(
         default_factory=BesselBasisConfig
     )
@@ -412,7 +412,10 @@ class RadialEmbeddingConfig:
 
     def build(self):
         return RadialEmbeddingBlock(
-            basis=self.radial_basis.build(), envelope=self.envelope.build(self.radial_basis.r_max)
+            r_max=self.r_max,
+            r_max_trainable=self.r_max_trainable,
+            basis=self.radial_basis.build(),
+            envelope=self.envelope.build(),
         )
 
 

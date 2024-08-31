@@ -270,7 +270,13 @@ class GateSelfConnection(SelfConnectionBlock):
         species_embed: Float[Array, 'num_species embed_dim'],
         ctx: Context,
     ):
-        return e3nn.gate(node_feats, even_act=jax.nn.silu, odd_act=jax.nn.tanh)
+        return e3nn.gate(
+            node_feats,
+            even_act=jax.nn.silu,
+            odd_act=jax.nn.tanh,
+            even_gate_act=jax.nn.silu,
+            odd_gate_act=jax.nn.tanh,
+        )
 
 
 class MLPSelfGate(SelfConnectionBlock):

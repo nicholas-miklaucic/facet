@@ -142,7 +142,7 @@ class MACE(IrrepsModule):
         species_embs = node_feats
 
         if not (hasattr(vectors, 'irreps') and hasattr(vectors, 'array')):
-            vectors = E3IrrepsArray('1o', vectors)
+            vectors = E3IrrepsArray('1e', vectors)
 
         radial_embedding = self.radial_embedding(safe_norm(vectors.array, axis=-1), ctx=ctx)
         radial_embedding = radial_embedding.astype(vectors.dtype)
