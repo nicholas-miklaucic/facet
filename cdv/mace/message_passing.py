@@ -71,9 +71,10 @@ class SevenNetConv(MPConv):
 
         # edge_sh is not given in this interface: perhaps that should be cached? is it memory-bound
         # or FLOP-bound?
-        edge_sh = e3nn.spherical_harmonics(
-            e3nn.Irreps.spherical_harmonics(self.max_ell, p=1), vectors, normalize=True
-        )
+        # edge_sh = e3nn.spherical_harmonics(
+        #     e3nn.Irreps.spherical_harmonics(self.max_ell, p=1), vectors, normalize=True
+        # )
+        edge_sh = vectors
 
         # map node features onto edges for tp
         edge_features = node_feats  # [n_nodes, irreps]
@@ -199,7 +200,8 @@ class SimpleMixMLPConv(MPConv):
         msg_prefix = messages_broadcast.filter(inner_irreps)
         vec_harms = e3nn.tensor_product(
             messages_broadcast,
-            e3nn.spherical_harmonics(range(1, self.max_ell + 1), vectors, True),
+            # e3nn.spherical_harmonics(range(1, self.max_ell + 1), vectors, True),
+            vectors,
             filter_ir_out=inner_irreps,
         )
 

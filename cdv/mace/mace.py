@@ -148,10 +148,17 @@ class MACE(IrrepsModule):
         radial_embedding = radial_embedding.astype(vectors.dtype)
         # debug_structure(radial_embedding=radial_embedding)
 
+        # vector_shs = e3nn.spherical_harmonics(self.interaction_templ.conv.max_ell, vectors, True)
+        vector_shs = e3nn.spherical_harmonics(
+            e3nn.Irreps.spherical_harmonics(self.interaction_templ.conv.max_ell, p=1),
+            vectors,
+            normalize=True,
+        )
+
         outputs = []
         for i, layer in enumerate(self.layers):
             node_feats, readout = layer(
-                vectors,
+                vector_shs,
                 node_feats,
                 node_species,
                 radial_embedding,
