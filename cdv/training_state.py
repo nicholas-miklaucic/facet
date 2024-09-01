@@ -13,6 +13,7 @@ from typing import Any, Literal, Mapping, Sequence
 import chex
 import jax
 import jax.numpy as jnp
+import numpy as np
 import optax
 import orbax.checkpoint as ocp
 import pandas as pd
@@ -457,23 +458,41 @@ class TrainingRun:
         return self.curr_step + 1 == self.num_steps
 
     @property
+    def i_in_epoch(self):
+        return (self.curr_step + 1) % self.steps_in_epoch
+
+    def equispaced_steps(self, step, epoch_frac):
+        """Selects steps that are equispaced and
+        appear the correct number of times per epoch.
+
+        For example, epoch_frac=4 selects every 4th epoch's last step, and epoch_frac=1/16 selects
+        the steps after 1/16, 2/16, 3/16, ..., 16/16 of an epoch has completed.
+        """
+        repeat_after = int(np.ceil(epoch_frac)) * self.steps_in_epoch
+        num_steps = round(repeat_after / (epoch_frac * self.steps_in_epoch))
+        valid_steps = [round(x) for x in np.linspace(0, repeat_after, num_steps, endpoint=False)]
+        return ((step + 1) % repeat_after) in valid_steps
+
+    @property
     def should_log(self):
-        return (self.curr_step + 1) % (
-            self.steps_in_epoch // self.config.log.logs_per_epoch
-        ) == 0 or self.is_last_step
+        return (
+            self.equispaced_steps(self.curr_step, 1 / self.config.log.logs_per_epoch)
+            or self.is_last_step
+        ) or self.is_last_step
 
     @property
     def should_ckpt(self):
-        right_step = (self.curr_step + 1) % (
-            self.config.log.epochs_per_ckpt * self.steps_in_epoch
-        ) == 0
-        return (right_step or self.is_last_step) and not self.config.debug_mode
+        return (
+            self.equispaced_steps(self.curr_step, self.config.log.epochs_per_ckpt)
+            or self.is_last_step
+        ) and not self.config.debug_mode
 
     @property
     def should_validate(self):
-        return (self.curr_step + 1) % round(
-            self.config.log.epochs_per_valid * self.steps_in_epoch
-        ) == 0 or self.is_last_step
+        return (
+            self.equispaced_steps(self.curr_step, self.config.log.epochs_per_valid)
+            or self.is_last_step
+        )
 
     @property
     def lr(self):
@@ -516,8 +535,35 @@ class TrainingRun:
         zipname = make_archive(exp_name, 'zip', root_dir=folder)
         new_path = Path('logs') / f'{exp_name}.zip'
         shutil.move(zipname, new_path)
-        self.run['checkpoint'].upload(str(new_path), wait=True)
+        self.run['checkpoint'].upload(str(new_path))
 
         self.run.stop()
 
         return folder
+
+
+if __name__ == '__main__':
+    import pyrallis
+
+    # avoid neptune logging on startup
+    with open('configs/test.toml', 'r') as f:
+        cfg = pyrallis.cfgparsing.load(MainConfig, f)
+        cfg = pyrallis.encode(cfg)
+        cfg['debug_mode'] = True
+        cfg = pyrallis.decode(MainConfig, cfg)
+
+    run = TrainingRun(cfg)
+
+    cfg = pyrallis.encode(cfg)
+    cfg['debug_mode'] = False
+    cfg = pyrallis.decode(MainConfig, cfg)
+    run.config = cfg
+
+    print(run.steps_in_epoch)
+
+    print('i', 'ckpt', 'val', 'log', sep='\t')
+    for i in range(run.steps_in_epoch * cfg.log.epochs_per_ckpt + 2):
+        run.curr_step = i
+        flags = (run.should_ckpt, run.should_validate, run.should_log)
+        if any(flags):
+            print(i, *flags, sep='\t')

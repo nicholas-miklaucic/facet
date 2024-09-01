@@ -320,6 +320,9 @@ class MLPConfig:
     # Whether to use a bias. Also applies to LayerNorm.
     use_bias: bool = False
 
+    # normalization: 'layer', 'weight', 'none'
+    normalization: str = 'layer'
+
     def build(self) -> LazyInMLP:
         """Builds the head from the config."""
         return LazyInMLP(
@@ -330,6 +333,7 @@ class MLPConfig:
             dropout_rate=self.dropout,
             residual=self.residual,
             use_bias=self.use_bias,
+            normalization=self.normalization,
         )
 
 

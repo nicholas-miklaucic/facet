@@ -118,29 +118,37 @@ class LazyInMLP(nn.Module):
 
         if self.normalization == 'weight':
             Dense = lambda *args, **kwargs: nn.WeightNorm(
-                nn.Dense(*args, use_bias=self.use_bias, **kwargs)
+                nn.Dense(
+                    *args,
+                    use_bias=self.use_bias,
+                    kernel_init=self.kernel_init,
+                    bias_init=self.bias_init,
+                    dtype=x.dtype,
+                    **kwargs,
+                )
             )
         else:
-            Dense = lambda *args, **kwargs: nn.Dense(*args, use_bias=self.use_bias, **kwargs)
+            Dense = lambda *args, **kwargs: nn.Dense(
+                *args,
+                use_bias=self.use_bias,
+                kernel_init=self.kernel_init,
+                bias_init=self.bias_init,
+                dtype=x.dtype,
+                **kwargs,
+            )
 
         for next_dim in self.inner_dims:
-            x = Dense(
-                next_dim, kernel_init=self.kernel_init, bias_init=self.bias_init, dtype=x.dtype
-            )(x)
+            x = Dense(next_dim)(x)
             x = self.inner_act(x)
             x = nn.Dropout(self.dropout_rate, deterministic=not ctx.training)(x)
             if self.normalization == 'layer':
                 x = nn.LayerNorm(dtype=x.dtype, use_bias=self.use_bias)(x)
             _curr_dim = next_dim
 
-        x = nn.Dense(
-            out_dim, kernel_init=self.kernel_init, bias_init=self.bias_init, dtype=x.dtype
-        )(x)
+        x = Dense(out_dim)(x)
         if self.residual:
             if orig_x.shape[-1] != out_dim:
-                x_resid = Dense(
-                    out_dim, kernel_init=self.kernel_init, bias_init=self.bias_init, dtype=x.dtype
-                )(orig_x)
+                x_resid = Dense(out_dim)(orig_x)
             else:
                 x_resid = orig_x
 
