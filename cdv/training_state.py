@@ -542,28 +542,28 @@ class TrainingRun:
         return folder
 
 
-if __name__ == '__main__':
-    import pyrallis
+# if __name__ == '__main__':
+#     import pyrallis
 
-    # avoid neptune logging on startup
-    with open('configs/test.toml', 'r') as f:
-        cfg = pyrallis.cfgparsing.load(MainConfig, f)
-        cfg = pyrallis.encode(cfg)
-        cfg['debug_mode'] = True
-        cfg = pyrallis.decode(MainConfig, cfg)
+#     # avoid neptune logging on startup
+#     with open('configs/test.toml', 'r') as f:
+#         cfg = pyrallis.cfgparsing.load(MainConfig, f)
+#         cfg = pyrallis.encode(cfg)
+#         cfg['debug_mode'] = True
+#         cfg = pyrallis.decode(MainConfig, cfg)
 
-    run = TrainingRun(cfg)
+#     run = TrainingRun(cfg)
 
-    cfg = pyrallis.encode(cfg)
-    cfg['debug_mode'] = False
-    cfg = pyrallis.decode(MainConfig, cfg)
-    run.config = cfg
+#     cfg = pyrallis.encode(cfg)
+#     cfg['debug_mode'] = False
+#     cfg = pyrallis.decode(MainConfig, cfg)
+#     run.config = cfg
 
-    print(run.steps_in_epoch)
+#     print(run.steps_in_epoch)
 
-    print('i', 'ckpt', 'val', 'log', sep='\t')
-    for i in range(run.steps_in_epoch * cfg.log.epochs_per_ckpt + 2):
-        run.curr_step = i
-        flags = (run.should_ckpt, run.should_validate, run.should_log)
-        if any(flags):
-            print(i, *flags, sep='\t')
+#     print('i', 'ckpt', 'val', 'log', sep='\t')
+#     for i in range(run.steps_in_epoch * cfg.log.epochs_per_ckpt + 2):
+#         run.curr_step = i
+#         flags = (run.should_ckpt, run.should_validate, run.should_log)
+#         if any(flags):
+#             print(i, *flags, sep='\t')

@@ -13,7 +13,7 @@ shuffle_seed = 1618
 train_split = 3
 test_split = 30
 valid_split = 3
-batches_per_group = 32
+batches_per_group = 256
 
 [cli]
 verbosity = "info"
@@ -87,7 +87,7 @@ r_max = 5
 r_max_trainable = false
 
 [mace.edge_embed.radial_basis]
-num_basis = 8
+num_basis = 10
 kind = "bessel"
 freq_trainable = false
 
