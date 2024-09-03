@@ -1,10 +1,15 @@
 """Generic layers useful for dealing with irreps of E(3)."""
 
-from typing import Callable
+from collections import defaultdict
+from typing import Callable, Literal
 import e3nn_jax as e3nn
+import jax.numpy as jnp
 
 from cdv.layers import Context, E3Irreps, E3IrrepsArray
 from flax import linen as nn
+from eins import Reductions as R
+
+from cdv.utils import debug_structure
 
 
 def Linear(*args, **kwargs):
@@ -26,17 +31,49 @@ class IrrepsAdapter(IrrepsModule):
     """Generic module that can convert between irreps."""
 
 
-class LinearReadoutBlock(IrrepsAdapter):
+class LinearAdapter(IrrepsAdapter):
     """Simple linear layer."""
 
     @nn.compact
     def __call__(self, x: E3IrrepsArray, ctx: Context) -> E3IrrepsArray:
         """batch irreps -> batch irreps_out"""
         # x = [n_nodes, irreps]
-        return e3nn.flax.Linear(self.ir_out)(x)
+        return Linear(self.ir_out)(x)
 
 
-class NonlinearReadoutBlock(IrrepsAdapter):
+class ResidualAdapter(IrrepsAdapter):
+    """Simple adapter for residual connections. Simply truncates and pads with 0s as appropriate."""
+
+    @nn.compact
+    def __call__(self, x: E3IrrepsArray, ctx: Context) -> E3IrrepsArray:
+        """batch irreps -> batch irreps_out"""
+        x = x.simplify()
+        out_chunks = []
+        for out_mul, out_ir in self.ir_out:
+            added = False
+            for (in_mul, in_ir), chunk in zip(x.irreps, x.chunks):
+                if added:
+                    continue
+
+                if in_ir == out_ir:
+                    added = True
+                    if in_mul == out_mul:
+                        out_chunks.append(chunk)
+                    else:
+                        # -1 is irreps axis, which isn't changing
+                        # -2 is channel axis
+                        lin = nn.DenseGeneral(
+                            out_mul, axis=-2, name=f'{in_mul}->{out_mul}_{out_ir}', use_bias=False
+                        )
+                        # debug_structure(chunk=chunk, lin=jnp.swapaxes(lin(chunk), -1, -2))
+                        out_chunks.append(jnp.swapaxes(lin(chunk), -1, -2))
+
+            if not added:
+                out_chunks.append(None)
+        return e3nn.from_chunks(self.ir_out, out_chunks, leading_shape=x.shape[:-1])
+
+
+class NonlinearAdapter(IrrepsAdapter):
     """Nonlinear readout block: linear layer, gated nonlinearity, then a second linear layer."""
 
     hidden_irreps: E3Irreps
@@ -61,3 +98,67 @@ class NonlinearReadoutBlock(IrrepsAdapter):
         return Linear(self.ir_out)(x)
 
     # [n_nodes, output_irreps]
+
+
+class E3LayerNorm(nn.Module):
+    """
+    Layer norm modeled after Equiformer v3.
+
+    https://arxiv.org/pdf/2306.12059
+
+    Can separate scalars or everything.
+    """
+
+    separation: Literal['scalars', 'all-separate']
+    scale_init: nn.initializers.Initializer = nn.ones
+    learned_scale: bool = True
+    eps: float = 1e-3
+
+    @nn.compact
+    def __call__(self, x: E3IrrepsArray, ctx: Context) -> E3IrrepsArray:
+        groups = defaultdict(list)
+
+        def get_group(ir: e3nn.Irrep):
+            if self.separation == 'scalars':
+                return 0 if ir.l == 0 else 1
+            elif self.separation == 'all-separate':
+                return ir.l
+
+        for (mul, ir), chunk in zip(x.irreps, x.chunks):
+            groups[get_group(ir)].append(chunk)
+
+        data = {
+            k: jnp.concat([v.reshape(*x.shape[:-1], -1) for v in vs], axis=-1)
+            for k, vs in groups.items()
+        }
+        scales = {}
+        shifts = {}
+
+        # Broadcasting happens over both channel and irrep component.
+        for group, values in data.items():
+            # debug_structure(values=values)
+            if group == 0:
+                shifts[group] = values.mean(axis=-1)
+            else:
+                shifts[group] = jnp.array(0.0, dtype=x.dtype)
+
+            scales[group] = jnp.sqrt(
+                jnp.square(values - shifts[group][..., None]).mean(axis=-1) + self.eps
+            )
+
+        if self.learned_scale:
+            learned_scale = self.param('ln_scale', self.scale_init, (x.irreps.num_irreps,))
+        else:
+            learned_scale = jnp.array(1.0, dtype=x.dtype)
+
+        out_chunks = []
+        for (mul, ir), chunk in zip(x.irreps, x.chunks):
+            group = get_group(ir)
+            # debug_structure(chunk=chunk, shift=shifts[group], scale=scales[group])
+            out_chunks.append(
+                (chunk - shifts[group][..., None, None])
+                / (scales[group][..., None, None] + self.eps)
+            )
+
+        out = e3nn.from_chunks(x.irreps, out_chunks, leading_shape=x.shape[:-1])
+        return out * learned_scale

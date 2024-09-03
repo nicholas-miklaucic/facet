@@ -105,7 +105,8 @@ def show_model(config: MainConfig, make_hlo_dot=False, do_profile=False, show_st
             val, grad = val_and_grad(params)
             jax.block_until_ready(grad)
     else:
-        val, grad = val_and_grad(params)
+        with jax.debug_nans():
+            val, grad = val_and_grad(params)
     debug_stat(loss=val, grad=grad, tree_depth=6)
 
     if not make_hlo_dot:

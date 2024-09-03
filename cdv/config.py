@@ -18,7 +18,7 @@ from pyrallis.fields import field
 from cdv import layers
 from cdv.e3.activations import S2Activation
 from cdv.layers import E3Irreps, Identity, LazyInMLP
-from cdv.mace.e3_layers import LinearReadoutBlock, NonlinearReadoutBlock
+from cdv.mace.e3_layers import LinearAdapter, NonlinearAdapter
 from cdv.mace.edge_embedding import (
     BesselBasis,
     PolynomialCutoff,
@@ -530,8 +530,8 @@ class ReadoutConfig:
 class LinearReadoutConfig(ReadoutConfig):
     kind: Const('linear') = 'linear'
 
-    def build(self) -> LinearReadoutBlock:
-        return LinearReadoutBlock(irreps_out=None)
+    def build(self) -> LinearAdapter:
+        return LinearAdapter(irreps_out=None)
 
 
 @dataclass
@@ -596,6 +596,39 @@ class MLPSelfGateConfig(SelfConnectionConfig):
 
 
 @dataclass
+class IrrepsConfig:
+    kind: Const('derived') = 'derived'
+    # Total dimension. May be off by one or two due to rounding.
+    dim: int = 384
+    # Max degree of tensors in representation.
+    max_degree: int = 2
+    # Decay for allocating dimensions to the different kinds of tensor. Dimension d+1 gets gamma
+    # times the number of dimension d tensors.
+    gamma: float = 1
+
+    # Number of layers.
+    num_layers: int = 2
+
+    # Minimum GCD of the chosen numbers of tensors.
+    min_gcd: int = 2
+
+    def build(self) -> str:
+        ells = np.arange(self.max_degree + 1)
+        props = float(self.gamma) ** ells
+        props /= sum(props)
+        props *= self.dim
+        tensor_dim = 2 * ells + 1
+        num_tensors = [round(x / self.min_gcd) * self.min_gcd for x in props / tensor_dim]
+
+        if any(t == 0 for t in num_tensors):
+            logging.warn(f'One given input has no assigned channels: {num_tensors}')
+
+        return [
+            ' + '.join([f'{num}x{ell}e' for num, ell in zip(num_tensors, ells)])
+        ] * self.num_layers
+
+
+@dataclass
 class MACEConfig:
     node_embed: Union[LinearNodeEmbeddingConfig] = field(default_factory=LinearNodeEmbeddingConfig)
     edge_embed: RadialEmbeddingConfig = field(default_factory=RadialEmbeddingConfig)
@@ -609,7 +642,10 @@ class MACEConfig:
     head: MLPConfig = field(default_factory=MLPConfig)
 
     residual: bool = False
-    hidden_irreps: tuple[str, ...] = ('128x0e + 64x1o + 32x2e', '128x0e + 64x1o + 32x2e')
+    hidden_irreps: Union[IrrepsConfig, tuple[str, ...]] = (
+        '128x0e + 64x1o + 32x2e',
+        '128x0e + 64x1o + 32x2e',
+    )
     outs_per_node: int = 64
     interaction_reduction: str = 'last'
     share_species_embed: bool = True
@@ -620,8 +656,12 @@ class MACEConfig:
         elem_indices: Sequence[int],
         precision: str,
     ) -> MaceModel:
+        if isinstance(self.hidden_irreps, IrrepsConfig):
+            hidden_irreps = self.hidden_irreps.build()
+        else:
+            hidden_irreps = self.hidden_irreps
         return MaceModel(
-            hidden_irreps=self.hidden_irreps,
+            hidden_irreps=hidden_irreps,
             node_embedding=self.node_embed.build(num_species, elem_indices),
             edge_embedding=self.edge_embed.build(),
             interaction=self.interaction.build(),

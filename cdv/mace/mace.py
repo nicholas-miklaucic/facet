@@ -17,7 +17,14 @@ from eins import EinsOp
 
 from cdv.databatch import CrystalGraphs
 from cdv.mace import edge_embedding
-from cdv.mace.e3_layers import IrrepsModule, Linear, LinearReadoutBlock, NonlinearReadoutBlock
+from cdv.mace.e3_layers import (
+    E3LayerNorm,
+    IrrepsModule,
+    Linear,
+    LinearAdapter,
+    NonlinearAdapter,
+    ResidualAdapter,
+)
 from cdv.layers import SegmentReduction, SegmentReductionKind
 from cdv.layers import Context, E3NormNorm, LazyInMLP, E3Irreps, E3IrrepsArray, edge_vecs
 from cdv.mace.edge_embedding import BesselBasis, ExpCutoff, RadialEmbeddingBlock, GaussBasis
@@ -72,11 +79,16 @@ class MACELayer(nn.Module):
     ):
         """-> (n_nodes output_irreps, n_nodes features*hidden_irreps)"""
         x = self.interaction(vectors, node_feats, radial_embedding, receivers, ctx=ctx)
-        if self.residual:
-            resid = Linear(x.irreps, force_irreps_out=True)(node_feats)
-            # debug_stat(resid=resid, x=x)
-            x = x + resid
         x = self.self_connection(x, node_species, species_embed, ctx)
+        if self.residual:
+            # resid = Linear(x.irreps, force_irreps_out=True, name='residual')(node_feats)
+            # resid used to happen before SC as well
+            # debug_stat(resid=resid, x=x)
+            x = E3LayerNorm(
+                separation='scalars', scale_init=nn.zeros, learned_scale=True, name='resid_ln'
+            )(x, ctx)
+            resid = ResidualAdapter(x.irreps)(node_feats, ctx=ctx)
+            x = x + resid
 
         if self.readout is not None:
             readout = self.readout(x, ctx=ctx)
