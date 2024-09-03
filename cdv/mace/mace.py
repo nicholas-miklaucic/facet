@@ -5,7 +5,7 @@ MACE network code. Adapted from https://github.com/ACEsuit/mace-jax.
 from collections.abc import Sequence
 import functools
 import math
-from typing import Callable, Optional
+from typing import Callable, Literal, Optional
 from typing import Set, Union
 from flax import linen as nn
 import e3nn_jax as e3nn
@@ -186,6 +186,7 @@ class MaceModel(nn.Module):
     head_templ: LazyInMLP
     residual: bool
 
+    precision: Literal['f32', 'bf16']
     outs_per_node: int
     share_species_embed: bool = True
 
@@ -211,13 +212,14 @@ class MaceModel(nn.Module):
         self.norm = nn.LayerNorm()
         self.node2graph_reduction = SegmentReduction('mean')
         self.head = self.head_templ.copy(out_dim=1, name='head')
+        self.dtype = jnp.float32 if self.precision == 'f32' else jnp.bfloat16
 
     def __call__(
         self,
         cg: CrystalGraphs,
         ctx: Context,
     ) -> Float[Array, ' graphs 1']:
-        vecs = edge_vecs(cg).astype(jnp.bfloat16)
+        vecs = edge_vecs(cg).astype(self.dtype)
 
         # shape [n_nodes, n_interactions, output_irreps]
         mace_out = self.mace(

@@ -8,6 +8,7 @@ import jax.numpy as jnp
 from jaxtyping import Float, Array
 
 
+from cdv.e3.activations import S2Activation
 from cdv.layers import Context, LazyInMLP, E3Irreps, E3IrrepsArray
 from cdv.mace.e3_layers import IrrepsModule, Linear
 from cdv.utils import debug_structure
@@ -273,10 +274,61 @@ class GateSelfConnection(SelfConnectionBlock):
         return e3nn.gate(
             node_feats,
             even_act=jax.nn.silu,
-            odd_act=jax.nn.tanh,
-            even_gate_act=jax.nn.silu,
-            odd_gate_act=jax.nn.tanh,
+            even_gate_act=jax.nn.sigmoid,
         )
+
+
+class S2SelfConnection(SelfConnectionBlock):
+    """
+    Combines inputs as functions on the sphere, applies a pointwise nonlinearity, and then
+    transforms back. Uses a linear layer on either side to mix channels.
+    """
+
+    act: S2Activation
+    mlp: LazyInMLP
+    num_heads: int
+
+    @nn.compact
+    def __call__(
+        self,
+        node_feats: E3IrrepsArray,  # [n_nodes, feature * irreps]
+        node_specie: jnp.ndarray,  # [n_nodes, ] int
+        species_embed: Float[Array, 'num_species embed_dim'],
+        ctx: Context,
+    ):
+        # we can only project S2 activations to a single output irrep in each dimension. We need to
+        # project so we have that many distinct irreps to do this with.
+        if node_feats.irreps.lmax == 0:
+            return self.mlp(node_feats, ctx=ctx)
+
+        up_mul = max([mul for mul, _ir in node_feats.filter(drop=['0e', '0o']).irreps])
+        up_ir = E3Irreps([(up_mul, ir) for _mul, ir in node_feats.irreps])
+
+        node_up = Linear(up_ir, name='proj_up')(node_feats).mul_to_axis()
+        act = self.act.copy(activation=None, name='mix')
+        signal = act.input_signal(node_up, ctx=ctx)
+        # act: *batches up beta alpha
+        # reshape so up is channel axis and get number of heads
+        vals = signal.grid_values
+        *batch, up, beta, alpha = vals.shape
+        vals = jnp.moveaxis(vals, -3, -1)
+        vals = vals.reshape(*batch, beta, alpha, self.num_heads, -1)
+
+        # now apply MLP
+        vals = self.mlp(vals, ctx=ctx)
+
+        # now move back
+        vals = vals.reshape(*batch, beta, alpha, up)
+        vals = jnp.moveaxis(vals, -1, -3)
+
+        # get back to spherical signal
+        signal = signal.replace_values(vals)
+
+        mix_out = act.output_irreps(signal, node_up).axis_to_mul()
+
+        node_down = Linear(self.ir_out, name='proj_down')(mix_out)
+
+        return node_down
 
 
 class MLPSelfGate(SelfConnectionBlock):

@@ -31,17 +31,20 @@ class RadialEmbeddingBlock(nn.Module):
     r_max_trainable: bool
     basis: RadialBasis
     envelope: Envelope
+    radius_transform: nn.Module
 
     def setup(self):
         if self.r_max_trainable:
             self.param_rmax = self.param(
-                'rmax', nn.initializers.constant(self.r_max), (), jnp.float32
+                'rmax', nn.initializers.constant(self.r_max), (1,), jnp.float32
             )
         else:
             self.param_rmax = self.r_max
 
     def __call__(self, edge_lengths: Float[Array, '*batch'], ctx: Context) -> E3IrrepsArray:
         """*batch -> *batch num_basis"""
+
+        edge_lengths = self.radius_transform(edge_lengths)
 
         embedding = (
             self.basis(edge_lengths, self.param_rmax, ctx)

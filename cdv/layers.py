@@ -5,6 +5,7 @@ from typing import Callable, Literal, Optional, Sequence
 import e3nn_jax as e3nn
 import jax
 import jax.numpy as jnp
+import jax.random as jr
 from eins import EinsOp
 from flax import linen as nn
 from flax import struct
@@ -190,111 +191,43 @@ class E3NormNorm(nn.Module):
         )
 
 
-class DistanceEncoder(nn.Module):
-    """Converts a scalar distance to an embedding."""
+class GaussianDropout(nn.Module):
+    """A Gaussian dropout layer."""
 
-    def __call__(self, d: Float[Array, ' batch'], ctx: Context) -> Float[Array, 'batch emb']:
-        raise NotImplementedError
+    sd: float
+    deterministic: Optional[bool] = None
+    rng_collection: str = 'dropout'
 
+    @nn.compact
+    def __call__(
+        self,
+        inputs,
+        deterministic: Optional[bool] = None,
+        rng: Optional[jr.PRNGKey] = None,
+    ):
+        """Applies a random dropout mask to the input.
 
-class GaussBasis(DistanceEncoder):
-    """Uses equispaced Gaussian RBFs, as in coGN."""
+        Args:
+          inputs: the inputs that should be randomly masked.
+          deterministic: if false the inputs are scaled by ``1 / (1 - rate)`` and
+            masked, whereas if true, no mask is applied and the inputs are returned
+            as is.
+          rng: an optional PRNGKey used as the random key, if not specified, one
+            will be generated using ``make_rng`` with the ``rng_collection`` name.
 
-    lo: float = 0
-    hi: float = 8
-    sd: float = 1
-    emb: int = 32
+        Returns:
+          The masked inputs reweighted to preserve mean.
+        """
+        deterministic = nn.merge_param('deterministic', self.deterministic, deterministic)
 
-    def setup(self):
-        self.locs = jnp.linspace(self.lo, self.hi, self.emb)
+        if (self.sd == 0.0) or deterministic:
+            return inputs
 
-    def __call__(self, d: Float[Array, ' batch'], ctx: Context) -> Float[Array, 'batch emb']:
-        z = d[:, None] - self.locs[None, :]
-        y = jnp.exp(-(z**2) / (2 * self.sd**2))
-        return y
-
-
-# different than
-# https://pytorch-geometric.readthedocs.io/en/latest/_modules/torch_geometric/nn/models/dimenet.html
-# it seems like what I do follows the paper better?
-
-
-class Envelope(nn.Module):
-    """Polynomial envelope that goes to 0 at a cutoff smoothly."""
-
-    # they seem to take p - 1 as input, which seems to me a little harebrained and fails for nans
-    # we just take in p and use the formula directly
-    p: int
-
-    def setup(self):
-        self.a = -(self.p + 1) * (self.p + 2) / 2
-        self.b = self.p * (self.p + 2)
-        self.c = -self.p * (self.p + 1) / 2
-
-    def __call__(self, x):
-        # our model shouldn't return nan, even for 0 input, so we have to change this
-        return 1 + x**self.p * (self.a + x * (self.b + x * self.c))
-
-
-class OldBessel1DBasis(DistanceEncoder):
-    """Uses spherical Bessel functions with a cutoff, as in DimeNet++."""
-
-    num_basis: int = 7
-    cutoff: float = 7
-    # Controls how fast the envelope goes to 0 at the cutoff.
-    envelope_exp: int = 6
-    freq_trainable: bool = True
-
-    def setup(self):
-        def freq_init(rng):
-            return jnp.arange(self.num_basis, dtype=jnp.float32) + 1
-
-        if self.freq_trainable:
-            self.freq = self.param('freq', freq_init)
-        else:
-            self.freq = freq_init(None)
-        self.envelope = Envelope(self.envelope_exp)
-
-    def __call__(self, x, ctx: Context):
-        dist = x[..., None] / self.cutoff
-        env = self.envelope(dist)
-
-        # e(d) = sqrt(2/c) * sin(fπd/c)/d
-        # we use sinc so it's defined at 0
-        # jnp.sinc is sin(πx)/(πx)
-        # e(d) = sqrt(2/c) * sin(πfd/c)/(fd/c) * f/c
-        # e(d) = sqrt(2/c) * sinc(πfd/c)) * πf/c
-
-        e_d = (
-            jnp.sqrt(2 / self.cutoff)
-            * jnp.sinc(self.freq * dist)
-            * (jnp.pi * self.freq / self.cutoff)
-        )
-
-        # debug_stat(e_d=e_d, env=env, dist=dist)
-        return env * e_d
-
-
-class Bessel2DBasis(nn.Module):
-    num_radial: int = 7
-    num_spherical: int = 7
-    cutoff: float = 7
-    # Controls how fast the envelope goes to 0 at the cutoff.
-    envelope_exp: int = 6
-
-    def setup(self):
-        self.envelope = Envelope(self.envelope_exp)
-        self.radial = OldBessel1DBasis(
-            num_basis=self.num_radial, cutoff=self.cutoff, envelope_exp=self.envelope_exp
-        )
-
-    def __call__(self, d, alpha, ctx):
-        # TODO implement this for real
-        dist_emb = self.radial(d, ctx) / self.radial(d * 0, ctx)  # batch radial
-        ang_emb = jnp.cos(alpha[:, None] * jnp.arange(self.num_spherical))  # batch spherical
-        return EinsOp('batch radial, batch spherical -> batch (radial spherical)')(
-            dist_emb, ang_emb
-        )
+        if rng is None:
+            rng = self.make_rng(self.rng_collection)
+        broadcast_shape = list(inputs.shape)
+        eps = jr.normal(rng, shape=broadcast_shape, dtype=inputs.dtype) * self.sd
+        return inputs + eps
 
 
 def shifted_softplus(x):

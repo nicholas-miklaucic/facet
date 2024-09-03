@@ -16,7 +16,8 @@ from flax.struct import dataclass
 from pyrallis.fields import field
 
 from cdv import layers
-from cdv.layers import E3Irreps, Envelope, Identity, LazyInMLP
+from cdv.e3.activations import S2Activation
+from cdv.layers import E3Irreps, Identity, LazyInMLP
 from cdv.mace.e3_layers import LinearReadoutBlock, NonlinearReadoutBlock
 from cdv.mace.edge_embedding import (
     BesselBasis,
@@ -25,13 +26,19 @@ from cdv.mace.edge_embedding import (
     RadialEmbeddingBlock,
     GaussBasis,
     ExpCutoff,
+    Envelope,
 )
 from cdv.mace.mace import (
     MaceModel,
 )
 from cdv.mace.message_passing import SevenNetConv, SimpleInteraction, SimpleMixMLPConv
 from cdv.mace.node_embedding import LinearNodeEmbedding, SevenNetEmbedding
-from cdv.mace.self_connection import GateSelfConnection, LinearSelfConnection, MLPSelfGate
+from cdv.mace.self_connection import (
+    GateSelfConnection,
+    LinearSelfConnection,
+    MLPSelfGate,
+    S2SelfConnection,
+)
 from cdv.regression import EFSLoss, EFSWrapper
 from cdv.vae import VAE, Decoder, Encoder, LatticeVAE, PropertyPredictor
 
@@ -279,7 +286,7 @@ class Layer:
         if self.name == 'Identity':
             return Identity()
 
-        for module in (nn, layers):
+        for module in (nn, layers, jnp):
             if hasattr(module, self.name):
                 layer = getattr(module, self.name)
                 if isinstance(layer, nn.Module):
@@ -314,7 +321,7 @@ class MLPConfig:
     # Whether to add residual.
     residual: bool = False
 
-    # Number of heads, for equivariant layer.
+    # Number of heads, for mixer.
     num_heads: int = 1
 
     # Whether to use a bias. Also applies to LayerNorm.
@@ -413,6 +420,7 @@ class RadialEmbeddingConfig:
         default_factory=BesselBasisConfig
     )
     envelope: Union[ExpCutoffConfig] = field(default_factory=ExpCutoffConfig)
+    radius_transform: str = 'Identity'
 
     def build(self):
         return RadialEmbeddingBlock(
@@ -420,6 +428,7 @@ class RadialEmbeddingConfig:
             r_max_trainable=self.r_max_trainable,
             basis=self.radial_basis.build(),
             envelope=self.envelope.build(),
+            radius_transform=Layer(self.radius_transform).build(),
         )
 
 
@@ -539,6 +548,42 @@ class GateConfig(SelfConnectionConfig):
 
 
 @dataclass
+class S2ActivationConfig:
+    activation: str = 'silu'
+    res_beta: int = 16
+    res_alpha: int = 15
+    normalization: str = 'integral'
+    quadrature: str = 'soft'
+    use_fft: bool = True
+
+    def build(self) -> S2Activation:
+        return S2Activation(
+            activation=Layer(self.activation).build(),
+            res_beta=self.res_beta,
+            res_alpha=self.res_alpha,
+            normalization=self.normalization,  # type: ignore
+            quadrature=self.quadrature,  # type: ignore
+            fft=self.use_fft,
+        )
+
+
+@dataclass
+class S2MLPMixerConfig(SelfConnectionConfig):
+    kind: Const('s2-mlp-mixer') = 's2-mlp-mixer'
+
+    s2_grid: S2ActivationConfig = field(default_factory=S2ActivationConfig)
+    mlp: MLPConfig = field(default_factory=MLPConfig)
+
+    def build(self) -> S2SelfConnection:
+        return S2SelfConnection(
+            irreps_out=None,
+            act=self.s2_grid.build(),
+            mlp=self.mlp.build(),
+            num_heads=self.mlp.num_heads,
+        )
+
+
+@dataclass
 class MLPSelfGateConfig(SelfConnectionConfig):
     kind: Const('mlp-gate') = 'mlp-gate'
     num_hidden_layers: int = 1
@@ -558,7 +603,9 @@ class MACEConfig:
         default_factory=SimpleInteractionBlockConfig
     )
     readout: Union[LinearReadoutConfig] = field(default_factory=LinearReadoutConfig)
-    self_connection: Union[GateConfig, MLPSelfGateConfig] = field(default_factory=GateConfig)
+    self_connection: Union[GateConfig, MLPSelfGateConfig, S2MLPMixerConfig] = field(
+        default_factory=GateConfig
+    )
     head: MLPConfig = field(default_factory=MLPConfig)
 
     residual: bool = False
@@ -571,6 +618,7 @@ class MACEConfig:
         self,
         num_species: int,
         elem_indices: Sequence[int],
+        precision: str,
     ) -> MaceModel:
         return MaceModel(
             hidden_irreps=self.hidden_irreps,
@@ -585,6 +633,7 @@ class MACEConfig:
             share_species_embed=self.share_species_embed,
             interaction_reduction=self.interaction_reduction,
             residual=self.residual,
+            precision=precision,
         )
 
 
@@ -711,6 +760,9 @@ class MainConfig:
     # Folder to initialize the encoders and downsampling.
     encoder_start_from: Optional[Path] = None
 
+    # Precision: 'f32' or 'bf16'.
+    precision: str = 'bf16'
+
     # Debug mode: turns off mid-run checkpointing and Neptune tracking.
     debug_mode: bool = False
 
@@ -785,6 +837,7 @@ class MainConfig:
             return self.mace.build(
                 self.data.num_species,
                 self.data.metadata['element_indices'],
+                self.precision,
             )
         else:
             raise ValueError(f'{self.regressor} not supported')

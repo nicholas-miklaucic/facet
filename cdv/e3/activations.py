@@ -2,10 +2,22 @@
 
 from typing import Callable, Literal, Optional
 import e3nn_jax as e3nn
+import jax.numpy as jnp
 from flax import linen as nn
 import rich.table
 
-from cdv.layers import Context, E3IrrepsArray
+from cdv.layers import Context, E3Irreps, E3IrrepsArray
+
+
+import yaml
+from yaml import Node, SafeDumper
+
+
+def represent_spherical_signal(d: SafeDumper, s: e3nn.SphericalSignal) -> Node:
+    return d.represent_dict({'s2_grid': s.grid_values})
+
+
+yaml.SafeDumper.add_representer(e3nn.SphericalSignal, represent_spherical_signal)
 
 
 class S2Activation(nn.Module):
@@ -53,20 +65,21 @@ class S2Activation(nn.Module):
             p_arg=1,
         )
 
+    def output_irreps(self, signal: e3nn.SphericalSignal, x_templ: E3IrrepsArray):
+        return e3nn.from_s2grid(
+            signal,
+            irreps=e3nn.Irreps([(1, ir) for ir in x_templ.irreps]),
+            normalization=self.normalization,
+            lmax_in=x_templ.irreps.lmax,
+            fft=self.fft,
+            use_s2fft=False,
+        ).astype(x_templ.dtype)
+
     def __call__(self, x: E3IrrepsArray, ctx: Context) -> E3IrrepsArray:
         """Applies the nonlinearity, preserving input shape."""
         signal = self.input_signal(x, ctx)
         signal = signal.apply(self.activation)
-        y = e3nn.from_s2grid(
-            signal,
-            irreps=e3nn.Irreps([(1, ir) for ir in x.irreps]),
-            normalization=self.normalization,
-            lmax_in=x.irreps.lmax,
-            fft=self.fft,
-            use_s2fft=False,
-        )
-        # this is promoted to float32 if the inputs were bfloat16, so convert back
-        return y.astype(x.dtype)
+        return self.output_irreps(signal, x)
 
 
 if __name__ == '__main__':

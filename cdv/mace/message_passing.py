@@ -150,14 +150,14 @@ class SevenNetConv(MPConv):
         fc: LazyInMLP = self.radial_weight.copy(out_dim=n_tp_weights)
 
         # the TP weights (v dimension) are given by the FC
-        weight = fc(radial_embedding.array, ctx=ctx)
+        weight = fc(radial_embedding, ctx=ctx)
 
         # debug_structure(weight=weight, edge_features=edge_features, sh=edge_sh)
 
         # tp between node features that have been mapped onto edges and edge RSH
         # weighted by FC weight, we vmap over the dimension of the edges
         edge_features = e3nn.vmap(e3nn.vmap(tp.left_right, in_axes=(0, None, 0)))(
-            weight, edge_features, edge_sh
+            weight.array, edge_features, edge_sh
         )
         # TODO: It's not great that e3nn_jax automatically upcasts internally,
         # but this would need to be fixed at the e3nn level.

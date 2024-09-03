@@ -2,10 +2,11 @@ batch_size = 256
 stack_size = 1
 do_profile = false
 debug_mode = false
-num_epochs = 2
+num_epochs = 10
 display = "progress"
 regressor = "mace"
 task = "e_form"
+precision = "f32"
 
 [data]
 dataset_name = "mptrj"
@@ -37,7 +38,7 @@ base_lr = 4e-3
 end_lr_frac = 0.04
 weight_decay = 1e-8
 beta_1 = 0.9
-beta_2 = 0.99
+beta_2 = 0.999
 nestorov = true
 max_grad_norm = 3.0
 schedule_free = false
@@ -50,19 +51,14 @@ force_weight = 0
 stress_weight = 0
 
 [mace]
-hidden_irreps = [
-    "128x0e + 64x1e + 32x2e",
-    "128x0e + 64x1e + 32x2e",
-    "128x0e + 64x1e + 32x2e",
-    "128x0e + 64x1e + 32x2e",
-]
+hidden_irreps = ["128x0e + 64x1e + 32x2e", "128x0e + 64x1e + 32x2e"]
 outs_per_node = 128
 interaction_reduction = "last"
 share_species_embed = true
 residual = true
 
 [mace.node_embed]
-embed_dim = 128
+embed_dim = 64
 kind = "linear"
 
 [mace.interaction]
@@ -72,24 +68,43 @@ kind = "simple"
 kind = "linear"
 
 [mace.self_connection]
-kind = "gate"
+kind = "s2-mlp-mixer"
 
-[mace.head]
-inner_dims = [64, 64]
+[mace.self_connection.mlp]
+inner_dims = [32]
 activation = "silu"
 final_activation = "Identity"
-dropout = 0.3
+dropout = 0
+residual = false
+num_heads = 2
+normalization = 'layer'
+use_bias = false
+
+[mace.self_connection.s2_grid]
+res_beta = 20
+res_alpha = 19
+normalization = 'integral'
+quadrature = 'soft'
+use_fft = false
+
+[mace.head]
+inner_dims = [128, 64]
+activation = "silu"
+final_activation = "Identity"
+dropout = 0
 residual = false
 num_heads = 1
+normalization = 'layer'
 
 [mace.edge_embed]
-r_max = 5
-r_max_trainable = false
+r_max = 7
+r_max_trainable = true
+radius_transform = 'Identity'
 
 [mace.edge_embed.radial_basis]
-num_basis = 8
+num_basis = 12
 kind = "bessel"
-freq_trainable = false
+freq_trainable = true
 
 [mace.edge_embed.envelope]
 kind = "exp"
@@ -99,13 +114,14 @@ c = 0.1
 [mace.interaction.message]
 kind = "sevennet-conv"
 avg_num_neighbors = 14
-max_ell = 2
+max_ell = 4
 
 [mace.interaction.message.radial_weight]
-inner_dims = [64]
+inner_dims = []
 activation = "silu"
-final_activation = "shifted_softplus"
+final_activation = "tanh"
 dropout = 0
 residual = false
 num_heads = 1
 use_bias = false
+normalization = "layer"
