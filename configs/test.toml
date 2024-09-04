@@ -1,20 +1,25 @@
-batch_size = 128
+batch_size = 256
 stack_size = 1
 do_profile = false
+num_epochs = 4
+precision = "f32"
 debug_mode = false
-num_epochs = 8
 display = "progress"
 regressor = "mace"
 task = "e_form"
-precision = "f32"
 
 [data]
 dataset_name = "mptrj"
+raw_data_folder = "data"
+data_folder = "precomputed"
 shuffle_seed = 1618
 train_split = 30
 test_split = 3
 valid_split = 3
 batches_per_group = 0
+batch_n_nodes = 1024
+k = 16
+batch_n_graphs = 32
 
 [cli]
 verbosity = "info"
@@ -30,13 +35,14 @@ log_dir = "logs"
 logs_per_epoch = 16
 epochs_per_ckpt = 4
 epochs_per_valid = 0.5
+tags = ["sweep-1"]
 
 [train]
 lr_schedule_kind = "cosine"
 start_lr_frac = 0.01
-base_lr = 1
+base_lr = 1.0
 end_lr_frac = 0.01
-weight_decay = 1e-3
+weight_decay = 0.001
 beta_1 = 0.9
 beta_2 = 0.999
 nestorov = false
@@ -44,27 +50,26 @@ max_grad_norm = 3.0
 schedule_free = false
 prodigy = true
 
-
-[train.loss]
-energy_weight = 1
-force_weight = 0
-stress_weight = 0
-
 [mace]
+residual = true
+resid_init = "zeros"
 outs_per_node = 128
 interaction_reduction = "last"
 share_species_embed = true
-residual = true
-resid_init = 'zeros'
 
-[mace.hidden_irreps]
-kind = 'derived'
-dim = 384
-num_layers = 3
+[train.loss]
+energy_weight = 1.0
+force_weight = 0.0
+stress_weight = 0.0
 
 [mace.node_embed]
-embed_dim = 128
+embed_dim = 64
 kind = "linear"
+
+[mace.edge_embed]
+r_max = 7.0
+r_max_trainable = true
+radius_transform = "Identity"
 
 [mace.interaction]
 kind = "simple"
@@ -75,36 +80,27 @@ kind = "linear"
 [mace.self_connection]
 kind = "s2-mlp-mixer"
 
-[mace.self_connection.mlp]
-inner_dims = [32, 32]
-activation = "silu"
-final_activation = "Identity"
-dropout = 0
-residual = false
-num_heads = 2
-normalization = 'layer'
-use_bias = false
-
-[mace.self_connection.s2_grid]
-res_beta = 20
-res_alpha = 19
-normalization = 'integral'
-quadrature = 'soft'
-use_fft = false
-
 [mace.head]
 inner_dims = [128, 64]
 activation = "silu"
 final_activation = "Identity"
-dropout = 0
+dropout = 0.0
 residual = false
 num_heads = 1
-normalization = 'layer'
+use_bias = false
+normalization = "layer"
 
-[mace.edge_embed]
-r_max = 7
-r_max_trainable = true
-radius_transform = 'Identity'
+[mace.hidden_irreps]
+kind = "derived"
+dim = 256
+max_degree = 2
+gamma = 1
+num_layers = 3
+min_gcd = 2
+
+[train.loss.reg_loss]
+loss_delta = 0.015625
+use_rmse = false
 
 [mace.edge_embed.radial_basis]
 num_basis = 12
@@ -118,14 +114,32 @@ c = 0.1
 
 [mace.interaction.message]
 kind = "sevennet-conv"
-avg_num_neighbors = 14
+avg_num_neighbors = 14.0
 max_ell = 4
+
+[mace.self_connection.s2_grid]
+activation = "silu"
+res_beta = 20
+res_alpha = 19
+normalization = "integral"
+quadrature = "soft"
+use_fft = false
+
+[mace.self_connection.mlp]
+inner_dims = [32]
+activation = "silu"
+final_activation = "Identity"
+dropout = 0.0
+residual = false
+num_heads = 2
+use_bias = false
+normalization = "layer"
 
 [mace.interaction.message.radial_weight]
 inner_dims = []
 activation = "silu"
-final_activation = "tanh"
-dropout = 0
+final_activation = "shifted_softplus"
+dropout = 0.0
 residual = false
 num_heads = 1
 use_bias = false

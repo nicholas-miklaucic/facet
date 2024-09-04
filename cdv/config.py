@@ -752,7 +752,8 @@ class TrainingConfig:
             base_lr = self.base_lr
             if self.prodigy:
                 base_lr = 1
-            warmup_steps = steps_in_epoch * max(1, round(num_epochs / 5))
+            # warmup_steps = steps_in_epoch * max(1, round(num_epochs / 5))
+            warmup_steps = 1
             return optax.warmup_cosine_decay_schedule(
                 init_value=base_lr * self.start_lr_frac,
                 peak_value=base_lr,

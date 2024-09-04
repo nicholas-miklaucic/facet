@@ -1,0 +1,337 @@
+# Contains documentation on all of the important config options.
+
+# The number of graphs collated into a single CrystalGraph object, with a shared edge list.
+# 32 is the base batch size: any multiple of that is allowed.
+batch_size = 256
+# The stack size: how many CrystalGraphs to put on a conventional batch axis. This is per-device:
+# if you use 3 GPUs, then the effective stack size is 3 times this.
+stack_size = 1
+# The number of epochs to train for.
+num_epochs = 4
+# Either "bf16" or "f32": whether to use f32 precision internally.
+# f32 is always used for the S2 activations, because Jax's Legendre
+# implementation doesn't support bf16. It is also always used for the 
+# head output and rescaling, because bf16's precision isn't enough for that.
+precision = "f32"
+# Sets a debug mode that disables Neptune logging, disables checkpointing, and disables generating
+# the model summary for each run.
+debug_mode = false
+# One of "progress" (a simple progress bar), "dashboard" (a full-screen TUI dashboard with learning
+# curves), or "quiet" (no CLI output). 
+display = "progress"
+# The regressor architecture being used. "mace" is currently the only option.
+regressor = "mace"
+# The task: currently "e_form" is the only supported one (property prediction).
+task = "e_form"
+
+[data]
+# The dataset name.
+dataset_name = "mptrj"
+# The random seed that controls how data is shuffled. Keeping this consistent will ensure that
+# variation in runs is not due to differences in data.
+shuffle_seed = 1618
+# The proportion of data to split into training, test, and validation. There are 36 groups of
+# batches, such that a single trajectory's frames are included within a single group. This ensures
+# that, by splitting on groups, we don't validate the model with frames very close to the training
+# set. 
+train_split = 30
+test_split = 3
+valid_split = 3
+
+# The number of batches from each group to use. There are roughly 1400 per group. 0 means to use all
+# of them. This is essentially a way of making quick testing easier: setting this to something like
+# 100 will make model training much faster while not completely ruining the model's ability to show
+# meaningful learning.
+batches_per_group = 0
+
+# The number of nodes each batch is padded to. (This is before batch_size and stack_size.)
+batch_n_nodes = 1024
+# The number of edges each node has.
+k = 16
+# The number of graphs each batch is padded to.
+batch_n_graphs = 32
+
+[cli]
+# Verbosity of logs.
+verbosity = "info"
+# Whether to show progress.
+show_progress = true
+
+# The device configuration.
+# To be honest, the best way to restrict GPU usage is to set CUDA_VISIBLE_DEVICES. It's quite
+# challenging to make sure Jax doesn't allocate memory on other devices within Python.
+[device]
+# The device to use.
+device = "gpu"
+max_gpus = 3
+gpu_ids = [0, 1, 2]
+
+# Logging configuration. For best results, it's good to make sure that the three logging rates divide
+# into one another. For example, logging 16 times per epoch, you should validate 1/2/4/8/16 times
+# per epoch (or once every N epochs), so each validation gets the same number of logging outputs.
+[log]
+# How many times to log output per epoch.
+logs_per_epoch = 16
+# How many epochs to checkpoint. This has a nontrivial impact on runtime, because it requires
+# syncing everything.
+epochs_per_ckpt = 4
+# How many epochs to run between re-evaluation of the validation set. This is expensive.
+epochs_per_valid = 0.5
+# Tags for the Neptune logs.
+tags = ["sweep-1"]
+
+[train]
+# "Cosine" is the only supported value right now.
+# This is cosine decay with linear warmup.
+lr_schedule_kind = "cosine"
+# The starting value, as a fraction of the base LR.
+start_lr_frac = 0.01
+# The peak LR.
+base_lr = 1.0
+# The ending value, as a fraction of the base LR.
+end_lr_frac = 0.01
+# The weight decay for AdamW.
+weight_decay = 0.001
+# β1 for AdamW.
+beta_1 = 0.9
+# β2 for AdamW.
+beta_2 = 0.999
+# Whether to use Nestorov momentum. Has no impact
+# for Prodigy or schedule-free.
+nestorov = false
+# Norm to clip gradients to.
+max_grad_norm = 3.0
+# Whether to use schedule-free optimization from "The Road Less Scheduled". This does not work for
+# now.
+schedule_free = false
+# Whether to use Prodigy, from "An Expeditiously Adaptive Parameter-Free Learner". This gives good
+# results in testing, and it means that a base LR of 1 can be set and not worried about too much.
+prodigy = true
+
+[mace]
+# Whether each layer has a residual connection.
+residual = true
+# The initialization for the LayerNorm applied to the layer outputs before adding the layer inputs,
+# in a residual connection. "zeros" initializes each layer as the identity function, which is
+# helpful in training deeper models. "ones" is the typical layernorm initialization, and for testing
+# it makes the initial model's gradients more reflective of what they are during training.
+resid_init = "zeros"
+# The dimension of the output vector for each node.
+outs_per_node = 128
+# How to generate the outputs per node. Can be any reduction: "sum", "mean", etc. GemNet takes the
+# sum of readouts for each layer, but most networks only use the last layer for outputs: "last".
+interaction_reduction = "last"
+# Whether species embeddings are shared across layers, or whether separate layers have their own embeddings.
+share_species_embed = true
+
+# Loss configuration. Force and stress are computed via differentiating the energy function, so
+# setting the force and stress weights to 0 makes the model roughly 2x faster.
+[train.loss]
+# Weight on the energy.
+energy_weight = 1.0
+# Weight on the force.
+force_weight = 0.0
+# Weight on the stress.
+stress_weight = 0.0
+
+[mace.node_embed]
+# The number of scalars to use for each species when embedding nodes initially. This is the first
+# input into the MACE layers.
+embed_dim = 64
+# The kind of node embedding. "linear" is standard one-hot embedding, and "sevennet" uses SevenNet's
+# embeddings.
+kind = "linear"
+
+[mace.edge_embed]
+# The maximum radius, in angstroms, after which edges have no contribution to message passing.
+r_max = 7.0
+# Whether r_max is trainable. Other libraries use radius-based graphs, so this isn't possible to do,
+# but here we can actually train it because our graph is k-NN.
+r_max_trainable = true
+# The transform to apply to radii before embedding them.
+radius_transform = "Identity"
+
+# The outer-level configuration for the block that lets different nodes interact with each other.
+[mace.interaction]
+# Determines how the convolution layer is used. "simple" means that the convolution is sandwiched
+# with two linear layers.
+kind = "simple"
+
+[mace.readout]
+# The readout kind. "linear" is a simple linear layer, and more work might be useful here.
+kind = "linear"
+
+[mace.self_connection]
+# The kind of self-connection: the second block in the layer, which is restricted to apply the same
+# function to all nodes.
+# "gate" applies a gated activation, and is relatively simple.
+# "mlp-gate" applies a gated activation, but uses an MLP to construct the gate values.
+
+# "s2-mlp-mixer" is more complicated, and at least somewhat novel. It applies a linear layer so each
+# kind of irrep has the same count. Then, it considers individual "channels" of shape 0e + 1e +
+# 2e..., which can be represented as a function on the sphere. It calculates this function on a
+# gridded approximation of the sphere, resulting in a grid with a value for each channel. In this
+# regular representation, any function applied to the entire spherical grid is equivariant, so we
+# can apply an MLP to mix the channels. Then, we project each channel's values on the sphere back to
+# spherical harmonics, and apply a final linear layer.
+kind = "s2-mlp-mixer"
+
+# The head layer, that takes in the values per node and produces an energy estimate.
+# This is just a normal MLP, no need to worry about equivariance.
+[mace.head]
+# The inner dimensions of the MLP.
+inner_dims = [128, 64]
+# The activation of the MLP.
+activation = "silu"
+# The final activation of the output.
+final_activation = "Identity"
+# Dropout rate.
+dropout = 0.0
+# Whether the network is residual.
+residual = false
+# Whether a bias is applied. Affects the Dense layers and LayerNorm.
+use_bias = false
+# Normalization: "layer", "weight", or "none".
+normalization = "layer"
+
+# Hidden irreps: the dimension of each internal layer's node features. There are 2 more layers than
+# this: one input layer with input dimension equal to the node embedding dim and all scalars, and
+# one output layer with output dimension equal to the outs_per_node and all scalars.
+
+# Instead of passing in a derived setup like this, one can instead pass in a simple list of strings,
+# like ["128x0e + 128x1o", "128x0e + 128x1o + 128x2e"]. This setup makes it easier to vary the
+# size of the entire network in a stable way.
+[mace.hidden_irreps]
+# The way of specifying irreps. Right now, this is the only option besides a list of strings.
+kind = "derived"
+# The total dimension. A tensor of rank l has 2l+1 dimensions, so irreps ax0e + bx1e + cx2e have a +
+# 3b + 5c dimensions. This is not perfectly exact, because there may not always be a configuration
+# that achieves the desired dimension and the below constraints, but it should be correct to within
+# one or two.
+dim = 256
+# The maximum degree of the tensors.
+max_degree = 2
+# The amount that tensor dimensions are weighted to be allocated more to high- or low-rank tensors.
+# A value of 1 allocates dimensions evenly. A value of 0.5 gives twice as many scalar dimensions as
+# vector dimensions, twice as many vector dimensions as rank-2 dimensions, etc.
+gamma = 1
+# The number of hidden layers.
+num_layers = 3
+# Forces all irrep counts to divide a value. For example, linear layers may be faster if the number
+# of tensors of a given rank is divisible by 4. This inherently makes the gamma value less accurate,
+# because it limits the options we have.
+min_gcd = 2
+
+# The loss function used whenever two reals are being compared.
+
+# We normally want our loss function to approximate L1 loss, which is how most models are compared.
+# Huber loss does not do this: it approximates L2 loss, and the L1 loss is scaled by delta. Instead,
+# we want a loss function that is scale-invariant and always sits between L2 and L1 loss. The
+# default loss function is my extension of similar ideas from the literature. It is continuous
+# everywhere, has continuous first and second derivatives, and at delta becomes pure L1 loss.
+# https://www.desmos.com/calculator/r2gc8dmz4y
+[train.loss.reg_loss]
+# The cutoff point at which L1 loss is used, as opposed to an L2-like loss.
+loss_delta = 0.015625
+# Whether to use RMSE instead.
+use_rmse = false
+
+# The radial basis used to represent edge length.
+[mace.edge_embed.radial_basis]
+# The number of basis functions. All choices have this parameter.
+num_basis = 12
+# The kind of basis function.
+# "bessel" is the Bessel basis used in most MACE-family architectures, based on the sinc function.
+kind = "bessel"
+# Whether the frequency values can be trained. In limited testing, this seems to be helpful, but
+# more work is needed.
+freq_trainable = true
+
+# The envelope function. To ensure that the network behaves continuously as the cutoff radius r_max
+# changes, the radial basis values are multiplied by a function that goes to 0 as r -> r_max. The
+# processing of the radial basis is then constrained such that f(0) = 0, and so distances
+# approaching r_max matter increasingly little.
+[mace.edge_embed.envelope]
+# The kind of cutoff. "poly" is the other main kind, used in MACE, but it has poor numerical
+# stability (especially in bf16.) "exp" is a cutoff based on the logistic function that has
+# continuous first and second derivatives, is numerically stable in half precision, and achieves a
+# relatively quick cutoff with as small higher-order derivatives as is reasonable.
+kind = "exp"
+# As a proportion of r_max, when to start the cutoff. Any value before this is completely unchanged.
+# Lower values mean more edges are affected by the cutoff, but makes the cutoff itself smoother.
+cutoff_start = 0.9
+# A constant that weights higher derivatives against lower derivatives. Low values result in a
+# cutoff that looks more like a line, so it can be less steep, but as such requires sharper turns
+# and so higher second and third derivatives. This doesn't matter that much, but if you have
+# numerical stability problems you may consider changing this.
+c = 0.1
+
+# The type of convolution.
+[mace.interaction.message]
+# The SevenNet convolution, based on NequIP but without element-specific weights.
+kind = "sevennet-conv"
+# The average number of effective neighbors (after the cutoff), to normalize the message sums by.
+avg_num_neighbors = 14.0
+# The maximum degree of the spherical harmonics used in the representation of the edge vector.
+# Higher values make the representation of angles between nodes more accurate at the cost of
+# additional computation and potential overfitting.
+max_ell = 4
+
+# The grid of the 2-sphere used for the s2-mixer-mlp self-connection.
+[mace.self_connection.s2_grid]
+# activation = "silu"  # Does not matter, replaced by an MLP
+
+# The MLP will activate on res_β * res_α points, so these grid values have a massive impact on
+# performance and memory usage. Below around 16 and 15, serious numerical issues occur.
+
+# The number of grid lines in the longitude direction. Must be even.
+res_beta = 20
+# The number of grid lines in the latitude direction. Must be odd.
+res_alpha = 19
+# The normalization of the values: "component", "norm", "integral"
+normalization = "integral"
+# Either "soft" or "gausslegendre": the latter is completely accurate for lower-degree polynomials
+# but "soft" seems to be the recommendation.
+quadrature = "soft"
+# Whether to use a Fast Fourier Transform to compute the grid. In limited testing, this is slower. I
+# would expect FFT to be faster for larger grids at some point.
+use_fft = false
+
+# The MLP applied to each grid point on the sphere. 
+# This is applied to n_nodes * n_channels * res_β * res_α values. As such, this is a hugely
+# memory- and FLOP-intensive part of the model, and judicious scaling is required.
+[mace.self_connection.mlp]
+# The inner dimension.
+inner_dims = [32]
+# The activation.
+activation = "silu"
+# The final activation.
+final_activation = "Identity"
+# Dropout.
+dropout = 0.0
+# Whether a residual connection is used.
+residual = false
+# Unlike other MLP configurations, this one uses a num_heads value. 
+
+# If we have 128 channels, our MLP will have 128 inputs. Instead of mixing every channel, we can
+# group the channels and apply the same MLP to each group, mixing within the groups but not within
+# all channels. This needs to be looked at more closely, but the gist is that higher values require
+# you to set mace.hidden_irreps.max_gcd so the number of channels evenly divides this value, and
+# that larger values are faster but less expressive.
+num_heads = 2
+
+# Whether biases are used.
+use_bias = false
+
+# Normalization: "layer", "weight", "none".
+normalization = "layer"
+
+[mace.interaction.message.radial_weight]
+inner_dims = []
+activation = "silu"
+final_activation = "shifted_softplus"
+dropout = 0.0
+residual = false
+num_heads = 1
+use_bias = false
+normalization = "layer"
