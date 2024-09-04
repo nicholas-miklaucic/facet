@@ -40,6 +40,7 @@ from cdv.mace.self_connection import (
     S2SelfConnection,
 )
 from cdv.regression import EFSLoss, EFSWrapper
+from cdv.schedule_free import schedule_free_adamw
 from cdv.vae import VAE, Decoder, Encoder, LatticeVAE, PropertyPredictor
 
 pyrallis.set_config_type('toml')
@@ -642,6 +643,7 @@ class MACEConfig:
     head: MLPConfig = field(default_factory=MLPConfig)
 
     residual: bool = False
+    resid_init: str = 'zeros'
     hidden_irreps: Union[IrrepsConfig, tuple[str, ...]] = (
         '128x0e + 64x1o + 32x2e',
         '128x0e + 64x1o + 32x2e',
@@ -674,6 +676,7 @@ class MACEConfig:
             interaction_reduction=self.interaction_reduction,
             residual=self.residual,
             precision=precision,
+            resid_init=Layer(self.resid_init).build(),
         )
 
 
@@ -768,6 +771,15 @@ class TrainingConfig:
                 weight_decay=self.weight_decay,
                 estim_lr_coef=self.base_lr / 4e-3,
             )
+        elif self.schedule_free:
+            tx = schedule_free_adamw(
+                learning_rate=learning_rate,
+                b1=self.beta_1,
+                b2=self.beta_2,
+                weight_decay=self.weight_decay,
+                eps=1e-6,
+            )
+            return tx
         else:
             tx = optax.adamw(
                 learning_rate,

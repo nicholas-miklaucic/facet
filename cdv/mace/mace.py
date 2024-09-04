@@ -65,6 +65,7 @@ class MACELayer(nn.Module):
     self_connection: SelfConnectionBlock
     readout: IrrepsModule | None
     residual: bool
+    resid_init: Callable
 
     @nn.compact
     def __call__(
@@ -85,7 +86,10 @@ class MACELayer(nn.Module):
             # resid used to happen before SC as well
             # debug_stat(resid=resid, x=x)
             x = E3LayerNorm(
-                separation='scalars', scale_init=nn.zeros, learned_scale=True, name='resid_ln'
+                separation='scalars',
+                scale_init=self.resid_init,
+                learned_scale=True,
+                name='resid_ln',
             )(x, ctx)
             resid = ResidualAdapter(x.irreps)(node_feats, ctx=ctx)
             x = x + resid
@@ -107,6 +111,7 @@ class MACE(IrrepsModule):
     only_last_readout: bool
     share_species_embed: bool
     residual: bool
+    resid_init: Callable
 
     def setup(self):
         layers = []
@@ -134,6 +139,7 @@ class MACE(IrrepsModule):
                     self_connection=self_connection,
                     readout=readout,
                     residual=self.residual,
+                    resid_init=self.resid_init,
                     name=f'layer_{i}',
                 )
             )
@@ -197,6 +203,7 @@ class MaceModel(nn.Module):
     readout: IrrepsModule
     head_templ: LazyInMLP
     residual: bool
+    resid_init: Callable
 
     precision: Literal['f32', 'bf16']
     outs_per_node: int
@@ -218,6 +225,7 @@ class MaceModel(nn.Module):
             only_last_readout=self.interaction_reduction == 'last',
             share_species_embed=self.share_species_embed,
             residual=self.residual,
+            resid_init=self.resid_init,
         )
 
         self.rescale = SpeciesWiseRescale()

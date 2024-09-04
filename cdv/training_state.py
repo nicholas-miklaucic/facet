@@ -28,6 +28,7 @@ from cdv.dataset import CrystalGraphs, dataloader
 from cdv.layers import Context
 from cdv.model_summary import model_summary
 from cdv.regression import EFSOutput, EFSWrapper
+from cdv.schedule_free import schedule_free_eval_params
 from cdv.utils import item_if_arr
 
 import neptune
@@ -318,9 +319,7 @@ class TrainingRun:
     @property
     def eval_state(self) -> TrainState:
         if self.config.train.schedule_free:
-            params = optax.contrib.schedule_free_eval_params(
-                self.state.opt_state, self.state.params
-            )
+            params = schedule_free_eval_params(self.state.opt_state, self.state.params)
             return self.state.replace(params=params)
         else:
             return self.state

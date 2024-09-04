@@ -2,7 +2,7 @@ batch_size = 256
 stack_size = 1
 do_profile = false
 debug_mode = false
-num_epochs = 2
+num_epochs = 5
 display = "progress"
 regressor = "mace"
 task = "e_form"
@@ -33,15 +33,15 @@ epochs_per_valid = 0.5
 
 [train]
 lr_schedule_kind = "cosine"
-start_lr_frac = 0.1
-base_lr = 4e-3
-end_lr_frac = 0.8
-weight_decay = 1e-8
-beta_1 = 0.9
-beta_2 = 0.999
-nestorov = true
+start_lr_frac = 0.01
+base_lr = 1e-4
+end_lr_frac = 0.99
+weight_decay = 0.05
+beta_1 = 0.95
+beta_2 = 0.99
+nestorov = false
 max_grad_norm = 3.0
-schedule_free = false
+schedule_free = true
 prodigy = false
 
 
@@ -55,11 +55,12 @@ outs_per_node = 128
 interaction_reduction = "last"
 share_species_embed = true
 residual = true
+resid_init = 'zeros'
 
 [mace.hidden_irreps]
 kind = 'derived'
 dim = 256
-num_layers = 4
+num_layers = 1
 
 [mace.node_embed]
 embed_dim = 64
