@@ -34,15 +34,15 @@ epochs_per_valid = 0.5
 [train]
 lr_schedule_kind = "cosine"
 start_lr_frac = 0.01
-base_lr = 1e-4
-end_lr_frac = 0.99
-weight_decay = 0.05
-beta_1 = 0.95
-beta_2 = 0.99
+base_lr = 1
+end_lr_frac = 0.01
+weight_decay = 0
+beta_1 = 0.9
+beta_2 = 0.999
 nestorov = false
 max_grad_norm = 3.0
-schedule_free = true
-prodigy = false
+schedule_free = false
+prodigy = true
 
 
 [train.loss]

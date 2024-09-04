@@ -769,16 +769,16 @@ class TrainingConfig:
                 learning_rate,
                 betas=(self.beta_1, self.beta_2),
                 weight_decay=self.weight_decay,
-                estim_lr_coef=self.base_lr / 4e-3,
+                estim_lr_coef=self.base_lr,
             )
         elif self.schedule_free:
-            tx = schedule_free_adamw(
-                learning_rate=learning_rate,
-                b1=self.beta_1,
-                b2=self.beta_2,
-                weight_decay=self.weight_decay,
-                eps=1e-6,
-            )
+            # tx = schedule_free_adamw(
+            #     learning_rate=learning_rate,
+            #     b1=self.beta_1,
+            #     b2=self.beta_2,
+            #     weight_decay=self.weight_decay,
+            #     eps=1e-6,
+            # )
             return tx
         else:
             tx = optax.adamw(
