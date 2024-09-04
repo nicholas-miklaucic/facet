@@ -752,7 +752,7 @@ class TrainingConfig:
             base_lr = self.base_lr
             if self.prodigy:
                 base_lr = 1
-            warmup_steps = steps_in_epoch * min(1, num_epochs // 2)
+            warmup_steps = steps_in_epoch * max(1, round(num_epochs / 5))
             return optax.warmup_cosine_decay_schedule(
                 init_value=base_lr * self.start_lr_frac,
                 peak_value=base_lr,
@@ -788,6 +788,7 @@ class TrainingConfig:
                 weight_decay=self.weight_decay,
                 nesterov=self.nestorov,
             )
+            tx = optax.contrib.mechanize(tx)
         return optax.chain(tx, optax.clip_by_global_norm(self.max_grad_norm))
 
 

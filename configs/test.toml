@@ -1,8 +1,8 @@
-batch_size = 256
+batch_size = 128
 stack_size = 1
 do_profile = false
 debug_mode = false
-num_epochs = 5
+num_epochs = 8
 display = "progress"
 regressor = "mace"
 task = "e_form"
@@ -36,7 +36,7 @@ lr_schedule_kind = "cosine"
 start_lr_frac = 0.01
 base_lr = 1
 end_lr_frac = 0.01
-weight_decay = 0
+weight_decay = 1e-3
 beta_1 = 0.9
 beta_2 = 0.999
 nestorov = false
@@ -59,11 +59,11 @@ resid_init = 'zeros'
 
 [mace.hidden_irreps]
 kind = 'derived'
-dim = 256
-num_layers = 1
+dim = 384
+num_layers = 3
 
 [mace.node_embed]
-embed_dim = 64
+embed_dim = 128
 kind = "linear"
 
 [mace.interaction]
@@ -76,7 +76,7 @@ kind = "linear"
 kind = "s2-mlp-mixer"
 
 [mace.self_connection.mlp]
-inner_dims = [32]
+inner_dims = [32, 32]
 activation = "silu"
 final_activation = "Identity"
 dropout = 0
