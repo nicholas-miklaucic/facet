@@ -63,7 +63,9 @@ class GaussBasis(RadialBasis):
     def setup(self):
         self.locs = jnp.linspace(0, self.mu_max, self.num_basis)
 
-    def __call__(self, d: Float[Array, ' *batch'], ctx: Context) -> Float[Array, '*batch emb']:
+    def __call__(
+        self, d: Float[Array, ' *batch'], r_max, ctx: Context
+    ) -> Float[Array, '*batch emb']:
         z = d[..., None] - self.locs
         y = jnp.exp(-(z**2) / (2 * self.sd**2))
         return y

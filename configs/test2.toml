@@ -1,7 +1,7 @@
-batch_size = 64
+batch_size = 128
 stack_size = 1
 do_profile = false
-num_epochs = 10
+num_epochs = 8
 precision = "f32"
 debug_mode = false
 display = "progress"
@@ -32,7 +32,7 @@ gpu_ids = [0, 1, 2]
 
 [log]
 log_dir = "logs"
-logs_per_epoch = 32
+logs_per_epoch = 16
 epochs_per_ckpt = 4
 epochs_per_valid = 0.5
 tags = []
@@ -40,7 +40,7 @@ tags = []
 [train]
 lr_schedule_kind = "cosine"
 start_lr_frac = 0.01
-base_lr = 1
+base_lr = 1.0
 end_lr_frac = 0.01
 weight_decay = 0.001
 beta_1 = 0.9
@@ -81,18 +81,18 @@ kind = "linear"
 kind = "s2-mlp-mixer"
 
 [mace.head]
-inner_dims = [128, 128]
+inner_dims = [128, 64]
 activation = "silu"
 final_activation = "Identity"
-dropout = 0.2
+dropout = 0.0
 residual = false
 num_heads = 1
-use_bias = true
+use_bias = false
 normalization = "layer"
 
 [mace.hidden_irreps]
 kind = "derived"
-dim = 784
+dim = 384
 max_degree = 2
 gamma = 1
 num_layers = 3
@@ -107,12 +107,6 @@ num_basis = 12
 kind = "bessel"
 freq_trainable = true
 
-# [mace.edge_embed.radial_basis]
-# num_basis = 64
-# kind = 'gauss'
-# mu_max = 8.0
-# sd = 0.3
-
 [mace.edge_embed.envelope]
 kind = "exp"
 cutoff_start = 0.9
@@ -120,14 +114,13 @@ c = 0.1
 
 [mace.interaction.message]
 kind = "sevennet-conv"
-# kind = "node-feature-mlp-weighted"
 avg_num_neighbors = 14.0
 max_ell = 4
 
 [mace.self_connection.s2_grid]
 activation = "silu"
-res_beta = 18
-res_alpha = 17
+res_beta = 20
+res_alpha = 19
 normalization = "integral"
 quadrature = "soft"
 use_fft = false
@@ -151,13 +144,3 @@ residual = false
 num_heads = 1
 use_bias = false
 normalization = "layer"
-
-# [mace.interaction.message.node_feature_mlp]
-# inner_dims = [16]
-# activation = "silu"
-# final_activation = "tanh"
-# dropout = 0.2
-# residual = false
-# num_heads = 1
-# use_bias = true
-# normalization = "layer"

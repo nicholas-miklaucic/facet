@@ -304,8 +304,11 @@ use_fft = false
 # The inner dimension.
 inner_dims = [32]
 # The activation.
+# To be honest, the sheer number of times this MLP is called might make it so that changing this to
+# something that requires fewer FLOPs to do would have a nontrivial impact on performance. More
+# testing is needed.
 activation = "silu"
-# The final activation.
+# The final activation. This could very well be more reasonably set to something besides the identity.
 final_activation = "Identity"
 # Dropout.
 dropout = 0.0

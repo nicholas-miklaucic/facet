@@ -177,6 +177,136 @@ class SevenNetConv(MPConv):
         return h
 
 
+class NodeFeatureMLPWeightedConv(MPConv):
+    """
+    A middle ground between SevenNet and NequIP convolutions. Element information is integrated, but
+    not through indexed weights. Instead, the source/target node features are used to generate
+    weights in the radial basis. This continues to ensure the cutoff behaves properly, but allows
+    for integration of node information.
+    """
+
+    node_feature_mlp: LazyInMLP
+
+    @nn.compact
+    def __call__(
+        self,
+        vectors: E3IrrepsArray,  # [n_nodes, k, 3]
+        node_feats: E3IrrepsArray,  # [n_nodes, irreps]
+        radial_embedding: E3IrrepsArray,  # [n_nodes, k, radial_embedding_dim]
+        receivers: jnp.ndarray,  # [n_nodes, k]
+        ctx: Context,
+    ) -> E3IrrepsArray:
+        edge_sh = vectors
+
+        # map node features onto edges for tp
+        edge_features = node_feats  # [n_nodes, irreps]
+
+        # we gather the instructions for the tp as well as the tp output irreps
+        mode = 'uvu'
+        trainable = True
+        irreps_after_tp = []
+        instructions = []
+
+        # iterate over both arguments, i.e. node irreps and edge irreps
+        # if they have a valid TP path for any of the target irreps,
+        # add to instructions and put in appropriate position
+        # we use uvu mode (where v is a single-element sum) and weights will
+        # be provide externally by the scalar MLP
+        # this triple for loop is similar to the one used in e3nn and nequip
+        for i, (mul_in1, irreps_in1) in enumerate(node_feats.irreps):
+            for j, (_, irreps_in2) in enumerate(edge_sh.irreps):
+                for curr_irreps_out in irreps_in1 * irreps_in2:
+                    if curr_irreps_out in self.ir_out:
+                        k = len(irreps_after_tp)
+                        irreps_after_tp += [(mul_in1, curr_irreps_out)]
+                        instructions += [(i, j, k, mode, trainable)]
+
+        # we will likely have constructed irreps in a non-l-increasing order
+        # so we sort them to be in a l-increasing order
+        irreps_after_tp, p, _inv = E3Irreps(irreps_after_tp).sort()
+
+        # if we sort the target irreps, we will have to sort the instructions
+        # acoordingly, using the permutation indices
+        sorted_instructions = []
+
+        for irreps_in1, irreps_in2, irreps_out, mode, trainable in instructions:
+            sorted_instructions += [
+                (
+                    irreps_in1,
+                    irreps_in2,
+                    p[irreps_out],
+                    mode,
+                    trainable,
+                )
+            ]
+
+        tp = FunctionalTensorProduct(
+            irreps_in1=edge_features.irreps,
+            irreps_in2=edge_sh.irreps,
+            irreps_out=irreps_after_tp,
+            instructions=sorted_instructions,
+        )
+
+        n_tp_weights = 0
+
+        for ins in tp.instructions:
+            if ins.has_weight:
+                n_tp_weights += ft.reduce(operator.mul, ins.path_shape, 1)
+
+        # Instead of thinking of these RBFs as inputs to an MLP, we can think of them as a function
+        # basis we can use to represent our outputs. We enforce that the output has to be a linear
+        # function of the RBFs, so the cutoff is applied properly.
+
+        # each of the TP weights is a linear function of the input embedding
+        n_mlp_out = n_tp_weights * radial_embedding.shape[-1]
+
+        # there are a couple options for node embedding here:
+        # - the original species embeddings
+        # - the scalars from the node embeddings
+        # - the norms of the node embeddings
+        # For now, we just use the scalars.
+
+        # this is a huge batched matrix multiplication, and we only need half precision
+        node_scalars = node_feats.filter('0e').array.astype(jnp.bfloat16)
+        src_nodes, dst_nodes = jnp.broadcast_arrays(
+            node_scalars[..., None, :],  # n_nodes 1 n_scalars
+            node_scalars[receivers],  # n_nodes k n_scalars
+        )
+        mlp_in = jnp.concatenate([src_nodes, dst_nodes], axis=-1)  # n_nodes k n_scalars*2
+
+        fc: LazyInMLP = self.node_feature_mlp.copy(out_dim=n_mlp_out)
+
+        # the TP weights (v dimension) are given by the FC
+        mlp_weight = fc(mlp_in, ctx=ctx)  # n_nodes k (n_tp n_basis)
+        mlp_weight = mlp_weight.reshape(
+            *mlp_weight.shape[:-1], n_tp_weights, radial_embedding.shape[-1]
+        )
+
+        weight = jnp.einsum('...ktb,...kb->...kt', mlp_weight, radial_embedding.array)
+
+        # debug_structure(weight=weight, edge_features=edge_features, sh=edge_sh)
+
+        # tp between node features that have been mapped onto edges and edge RSH
+        # weighted by FC weight, we vmap over the dimension of the edges
+        edge_features = e3nn.vmap(e3nn.vmap(tp.left_right, in_axes=(0, None, 0)))(
+            weight, edge_features, edge_sh
+        )
+        edge_features = jax.tree.map(lambda x: x.astype(node_feats.dtype), edge_features)
+
+        h = node_feats
+        # aggregate edges onto nodes after tp using e3nn-jax's index_add
+        h_type = h.dtype
+
+        e = edge_features.remove_zero_chunks().simplify()
+        h = e3nn.index_add(receivers, e, out_dim=h.shape[0])
+        h = h.astype(h_type)
+
+        # normalize by the average (not local) number of neighbors
+        h = h / self.avg_num_neighbors
+
+        return h
+
+
 class SimpleMixMLPConv(MPConv):
     radial_mix: LazyInMLP
 

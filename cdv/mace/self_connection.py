@@ -282,6 +282,9 @@ class S2SelfConnection(SelfConnectionBlock):
     """
     Combines inputs as functions on the sphere, applies a pointwise nonlinearity, and then
     transforms back. Uses a linear layer on either side to mix channels.
+
+    If separate is True, then the number of sphere-gridded functions is dependent on the maximum
+    number of vectors l > 0, with other scalars simply being concatenated.
     """
 
     act: S2Activation
@@ -299,7 +302,7 @@ class S2SelfConnection(SelfConnectionBlock):
         # we can only project S2 activations to a single output irrep in each dimension. We need to
         # project so we have that many distinct irreps to do this with.
         if node_feats.irreps.lmax == 0:
-            return self.mlp(node_feats, ctx=ctx)
+            return self.mlp.copy(inner_dims=[node_feats.shape[-1]] * 2)(node_feats, ctx=ctx)
 
         up_mul = max([mul for mul, _ir in node_feats.filter(drop=['0e', '0o']).irreps])
         up_ir = E3Irreps([(up_mul, ir) for _mul, ir in node_feats.irreps])
@@ -314,8 +317,15 @@ class S2SelfConnection(SelfConnectionBlock):
         vals = jnp.moveaxis(vals, -3, -1)
         vals = vals.reshape(*batch, beta, alpha, self.num_heads, -1)
 
+        # start with activation, because we just used a nonlinearity
+        # vals = jax.nn.silu(vals)
+
         # now apply MLP
         vals = self.mlp(vals, ctx=ctx)
+
+        # end with activation for same reason
+        # keep this one unbounded
+        # vals = vals * jax.nn.tanh(vals)
 
         # now move back
         vals = vals.reshape(*batch, beta, alpha, up)
@@ -325,6 +335,8 @@ class S2SelfConnection(SelfConnectionBlock):
         signal = signal.replace_values(vals)
 
         mix_out = act.output_irreps(signal, node_up).axis_to_mul()
+
+        mix_out = e3nn.concatenate([node_feats.filter('0e'), mix_out], axis=-1)
 
         node_down = Linear(self.ir_out, name='proj_down')(mix_out)
 

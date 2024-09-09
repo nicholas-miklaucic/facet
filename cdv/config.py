@@ -31,7 +31,12 @@ from cdv.mace.edge_embedding import (
 from cdv.mace.mace import (
     MaceModel,
 )
-from cdv.mace.message_passing import SevenNetConv, SimpleInteraction, SimpleMixMLPConv
+from cdv.mace.message_passing import (
+    NodeFeatureMLPWeightedConv,
+    SevenNetConv,
+    SimpleInteraction,
+    SimpleMixMLPConv,
+)
 from cdv.mace.node_embedding import LinearNodeEmbedding, SevenNetEmbedding
 from cdv.mace.self_connection import (
     GateSelfConnection,
@@ -469,12 +474,9 @@ class SevenNetConvConfig(MessageConfig):
     )
 
     def build(self) -> SevenNetConv:
-        if Layer(self.radial_weight.activation).build()(0.0) != 0:
-            raise ValueError('Activation for radial MLP must go through origin.')
-
         if (
-            self.radial_weight.final_activation == 'Identity'
-            or Layer(self.radial_weight.final_activation).build()(0.0) != 0
+            self.radial_weight.final_activation != 'Identity'
+            and Layer(self.radial_weight.final_activation).build()(0.0) != 0
         ):
             raise ValueError('Final activation for radial MLP must go through origin.')
 
@@ -490,9 +492,25 @@ class SevenNetConvConfig(MessageConfig):
 
 
 @dataclass
+class NodeFeatureMLPWeightedConfig(MessageConfig):
+    kind: Const('node-feature-mlp-weighted') = 'node-feature-mlp-weighted'
+    avg_num_neighbors: float = 14
+    max_ell: int = 2
+    node_feature_mlp: MLPConfig = field(default=MLPConfig)
+
+    def build(self) -> NodeFeatureMLPWeightedConv:
+        return NodeFeatureMLPWeightedConv(
+            irreps_out=None,
+            avg_num_neighbors=self.avg_num_neighbors,
+            max_ell=self.max_ell,
+            node_feature_mlp=self.node_feature_mlp.build(),
+        )
+
+
+@dataclass
 class InteractionConfig:
-    message: Union[SimpleMixMessageConfig, SevenNetConvConfig] = field(
-        default_factory=SimpleMixMessageConfig
+    message: Union[SimpleMixMessageConfig, SevenNetConvConfig, NodeFeatureMLPWeightedConfig] = (
+        field(default_factory=SimpleMixMessageConfig)
     )
 
 
@@ -748,19 +766,43 @@ class TrainingConfig:
     prodigy: bool = False
 
     def lr_schedule(self, num_epochs: int, steps_in_epoch: int):
+        num_steps = num_epochs * steps_in_epoch
+        warmup_steps = round(num_steps / 10)
         if self.lr_schedule_kind == 'cosine':
-            base_lr = self.base_lr
-            if self.prodigy:
-                base_lr = 1
             # warmup_steps = steps_in_epoch * max(1, round(num_epochs / 5))
-            warmup_steps = 1
-            return optax.warmup_cosine_decay_schedule(
-                init_value=base_lr * self.start_lr_frac,
-                peak_value=base_lr,
-                warmup_steps=warmup_steps,
-                decay_steps=num_epochs * steps_in_epoch,
-                end_value=base_lr * self.end_lr_frac,
-            )
+            if self.prodigy:
+                base_lr = 1.0
+                warmup_frac = 0.2
+                warmup_steps = round(num_steps * warmup_frac)
+                other_steps = num_steps - warmup_steps
+                sched = optax.join_schedules(
+                    [
+                        optax.polynomial_schedule(
+                            init_value=base_lr * self.start_lr_frac,
+                            end_value=base_lr,
+                            power=1,
+                            transition_steps=warmup_steps,
+                        ),
+                        optax.polynomial_schedule(
+                            init_value=base_lr,
+                            end_value=base_lr * self.end_lr_frac,
+                            power=1,
+                            transition_steps=other_steps,
+                        ),
+                    ],
+                    boundaries=[warmup_steps],
+                )
+
+                return sched
+            else:
+                base_lr = self.base_lr
+                return optax.warmup_cosine_decay_schedule(
+                    init_value=base_lr * self.start_lr_frac,
+                    peak_value=base_lr,
+                    warmup_steps=warmup_steps,
+                    decay_steps=num_steps,
+                    end_value=base_lr * self.end_lr_frac,
+                )
         else:
             raise ValueError('Other learning rate schedules not implemented yet')
 
@@ -780,8 +822,6 @@ class TrainingConfig:
             #     weight_decay=self.weight_decay,
             #     eps=1e-6,
             # )
-            return tx
-        else:
             tx = optax.adamw(
                 learning_rate,
                 b1=self.beta_1,
@@ -790,6 +830,14 @@ class TrainingConfig:
                 nesterov=self.nestorov,
             )
             tx = optax.contrib.mechanize(tx)
+        else:
+            tx = optax.adamw(
+                learning_rate,
+                b1=self.beta_1,
+                b2=self.beta_2,
+                weight_decay=self.weight_decay,
+                nesterov=self.nestorov,
+            )
         return optax.chain(tx, optax.clip_by_global_norm(self.max_grad_norm))
 
 
