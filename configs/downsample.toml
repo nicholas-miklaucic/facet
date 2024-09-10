@@ -93,7 +93,7 @@ normalization = "layer"
 [mace.hidden_irreps]
 kind = "derived"
 dim = 384
-max_degree = 2
+max_degree = 3
 gamma = 1
 num_layers = 3
 min_gcd = 2
@@ -124,7 +124,7 @@ c = 0.1
 kind = "sevennet-conv"
 # kind = "node-feature-mlp-weighted"
 avg_num_neighbors = 14.0
-max_ell = 4
+max_ell = 6
 
 [mace.self_connection.s2_grid]
 activation = "silu"
@@ -145,7 +145,7 @@ use_bias = false
 normalization = "layer"
 
 [mace.interaction.message.radial_weight]
-inner_dims = [32]
+inner_dims = []
 activation = "silu"
 final_activation = "tanh"
 dropout = 0.0
