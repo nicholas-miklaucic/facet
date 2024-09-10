@@ -1,46 +1,16 @@
-# CDV
-Working repository for diffusion and prediction models using MACE.
+# Facet
+Exploring the design surface of ACE for crystal deep learning
 
-## To Do 
-- Maybe give a LR-free method another whirl?
-- Only do tensor products we actually use!
-- Log actual GPU memory usage, optimize batch size
-- Write out plans for sweeping
-- Get a good baseline for future hyperparameter experimentation
+⚠️ **Facet is a cutting-edge research repository. It works well, but the code within has not been thoroughly tested for correctness at the level of more mature models. Copy at your own risk.** ⚠️
 
+## Overview
+Facet is a graph neural network architecture for crystal property prediction. Specifically, current work is on predicting energy, forces, and stress in materials. 
 
+It uses a message-passing architecture with steerable representations of SO(3), following the broad structure of [MACE](https://arxiv.org/abs/2206.07697). By using these steerable representations, we can achieve the same effect as many-body interactions in conventional GNN architectures like GemNet with a smaller computational and architectural burden.
+### Code
+This repository implements a JAX/Flax neural network architecture based on [MACE](https://github.com/ACEsuit/mace) and [SevenNet](https://github.com/MDIL-SNU/SevenNet). It is built from the ground up, starting from [`e3nn`](https://github.com/e3nn/e3nn-jax) and Flax. 
 
-## Ideas
-### Prediction Gradients
-MACE currently predicts forces and stress by differentiating the energy prediction function
-through the positions of the nodes. Is this a better way of doing diffusion?
+Using JAX, we can safely use irreps and compute equivariant tensor products without any runtime cost. JAX also enables efficient parallelism. Testing on 3 RTX 3090 GPUs, I achieve 95+% GPU utilization throughout training with only a few lines of code.
 
-### Lattice Prediction
-The edge images mean that gradients are computable w.r.t the lattice, especially if fractional coordinates are used. Is this better than predicting the lattice modification?
-
-### Constrained Diffusion
-What if Doob's h-transform is used to predict atom type by letting the atomic embeddings vary continuously?
-
-### Parameter Allocation
-What distribution of irreps leads to the best performance?
-What internal representation should be used when doing the linear up and down projections?
-
-### Tensor Products
-There are a few different ways of doing tensor products to update node representations. 
-
-We can take tensor products only within a single irrep, or we can take products between all allowed irreps from the input and output. Existing literature doesn't have the off-diagonal entries often, but this echoes the next point...
-
-It seems to me that using lower-rank linear layers could have a lot of potential. The most expensive part of the model is the node update, but it may be better to trade off fidelity there for more ability to let edges communicate.
-
-### Edge Updates
-Edge updates can in theory depend on 
-
-- the hidden states of the sender/reciever nodes
-- the species of the sender/receiver nodes
-- the edge distance
-
-How to best combine this information?
-
-For example, right now, edges are gated using the radial embedding, independent of the actual data. Perhaps this should change?
-
-Alternatively, could dot product attention be made stable?
+### Algorithms
+This repository also contains my exploration of the design surface of MACE-family architectures. Early work shows significant gains over SevenNet and MACE in early training, although of course any pronouncements must wait for models trained at scale. 
