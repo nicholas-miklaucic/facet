@@ -388,9 +388,13 @@ class GaussBasisConfig(RadialBasisConfig):
     kind: Const('gauss') = 'gauss'
     mu_max: float = 7
     sd: float = 1
+    mu_trainable: bool = False
+    sd_trainable: bool = False
 
     def build(self) -> GaussBasis:
-        return GaussBasis(self.num_basis, self.mu_max, self.sd)
+        return GaussBasis(
+            self.num_basis, self.mu_trainable, self.sd_trainable, self.mu_max, self.sd
+        )
 
 
 @dataclass

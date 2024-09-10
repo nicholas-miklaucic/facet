@@ -1,7 +1,7 @@
-batch_size = 128
+batch_size = 256
 stack_size = 1
 do_profile = false
-num_epochs = 8
+num_epochs = 4
 precision = "f32"
 debug_mode = false
 display = "progress"
@@ -32,7 +32,7 @@ gpu_ids = [0, 1, 2]
 
 [log]
 log_dir = "logs"
-logs_per_epoch = 16
+logs_per_epoch = 32
 epochs_per_ckpt = 4
 epochs_per_valid = 0.5
 tags = []
@@ -40,7 +40,7 @@ tags = []
 [train]
 lr_schedule_kind = "cosine"
 start_lr_frac = 0.01
-base_lr = 1.0
+base_lr = 4e-3
 end_lr_frac = 0.01
 weight_decay = 0.001
 beta_1 = 0.9
@@ -48,12 +48,12 @@ beta_2 = 0.999
 nestorov = false
 max_grad_norm = 3.0
 schedule_free = false
-prodigy = true
+prodigy = false
 
 [mace]
 residual = true
 resid_init = "zeros"
-outs_per_node = 128
+outs_per_node = 64
 interaction_reduction = "last"
 share_species_embed = true
 
@@ -63,7 +63,7 @@ force_weight = 0.0
 stress_weight = 0.0
 
 [mace.node_embed]
-embed_dim = 128
+embed_dim = 64
 kind = "linear"
 
 [mace.edge_embed]
@@ -81,13 +81,13 @@ kind = "linear"
 kind = "s2-mlp-mixer"
 
 [mace.head]
-inner_dims = [128, 64]
+inner_dims = [64, 64]
 activation = "silu"
 final_activation = "Identity"
-dropout = 0.0
+dropout = 0.2
 residual = false
 num_heads = 1
-use_bias = false
+use_bias = true
 normalization = "layer"
 
 [mace.hidden_irreps]
@@ -102,10 +102,18 @@ min_gcd = 2
 loss_delta = 0.015625
 use_rmse = false
 
+# [mace.edge_embed.radial_basis]
+# num_basis = 12
+# kind = "bessel"
+# freq_trainable = true
+
 [mace.edge_embed.radial_basis]
 num_basis = 12
-kind = "bessel"
-freq_trainable = true
+kind = 'gauss'
+mu_max = 7.0
+sd = 0.34
+mu_trainable = true
+sd_trainable = true
 
 [mace.edge_embed.envelope]
 kind = "exp"
@@ -114,13 +122,14 @@ c = 0.1
 
 [mace.interaction.message]
 kind = "sevennet-conv"
+# kind = "node-feature-mlp-weighted"
 avg_num_neighbors = 14.0
 max_ell = 4
 
 [mace.self_connection.s2_grid]
 activation = "silu"
-res_beta = 20
-res_alpha = 19
+res_beta = 18
+res_alpha = 17
 normalization = "integral"
 quadrature = "soft"
 use_fft = false
@@ -144,3 +153,13 @@ residual = false
 num_heads = 1
 use_bias = false
 normalization = "layer"
+
+# [mace.interaction.message.node_feature_mlp]
+# inner_dims = [16]
+# activation = "silu"
+# final_activation = "tanh"
+# dropout = 0.2
+# residual = false
+# num_heads = 1
+# use_bias = true
+# normalization = "layer"

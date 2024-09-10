@@ -57,17 +57,33 @@ class RadialEmbeddingBlock(nn.Module):
 class GaussBasis(RadialBasis):
     """Uses equispaced Gaussian RBFs, as in coGN."""
 
+    mu_trainable: bool
+    sd_trainable: bool
     mu_max: float
     sd: float = 1.0
 
     def setup(self):
-        self.locs = jnp.linspace(0, self.mu_max, self.num_basis)
+        def loc_init(rng):
+            return jnp.linspace(0, self.mu_max, self.num_basis, dtype=jnp.float32)
+
+        if self.mu_trainable:
+            self.mu = self.param('mu', loc_init)
+        else:
+            self.mu = loc_init(None)
+
+        def sd_init(rng):
+            return jnp.array([self.sd], dtype=jnp.float32)
+
+        if self.sd_trainable:
+            self.sigma = self.param('sigma', sd_init)
+        else:
+            self.sigma = sd_init(None)
 
     def __call__(
         self, d: Float[Array, ' *batch'], r_max, ctx: Context
     ) -> Float[Array, '*batch emb']:
-        z = d[..., None] - self.locs
-        y = jnp.exp(-(z**2) / (2 * self.sd**2))
+        z = d[..., None] - self.mu
+        y = jnp.exp(-(z**2) / (2 * self.sigma**2))
         return y
 
 

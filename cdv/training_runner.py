@@ -1,5 +1,6 @@
 """Training state runner interface."""
 
+from time import sleep
 from cdv.config import MainConfig
 from cdv.dashboard import Dashboard
 from cdv.training_state import TrainingRun
@@ -58,4 +59,5 @@ def run_using_progress(config: MainConfig):
         progress.advance(task, advance=0)
     print('Saved to:')
     print(run.finish().absolute())
+    sleep(60)
     return run
