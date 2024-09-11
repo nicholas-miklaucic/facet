@@ -393,12 +393,12 @@ def flax_summary(
 
 def callable_name(any_callable: Callable[..., Any]) -> str:
     if isinstance(any_callable, partial):
-        return any_callable.func.__qualname__
+        return any_callable.func.__qualname__.removesuffix('.__call__')
 
     try:
-        return any_callable.__qualname__
+        return any_callable.__qualname__.removesuffix('.__call__')
     except AttributeError:
-        return str(any_callable)
+        return str(any_callable).removesuffix('.__call__')
 
 
 def intercept_stat(next_fun, args, kwargs, context):
