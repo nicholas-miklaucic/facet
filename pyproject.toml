@@ -1,5 +1,5 @@
 [tool.ruff]
-include = ["cdv/**/*.py", "notebooks/**/*.ipynb"]
+include = ["facet/**/*.py", "notebooks/**/*.ipynb"]
 
 
 line-length = 100

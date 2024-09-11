@@ -28,7 +28,7 @@ def model_summary(config: MainConfig, write_to_file: bool = False, print_summary
     )
     html = conv.convert(output)
     if write_to_file:
-        with open('model.html', 'w') as out:
+        with open('reports/model.html', 'w') as out:
             out.write(html)
 
     return {'html': html, 'gflops': cost}
