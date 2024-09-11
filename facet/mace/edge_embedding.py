@@ -5,7 +5,7 @@ import jax.numpy as jnp
 from flax import linen as nn
 from jaxtyping import Float, Array
 
-from cdv.layers import Context, E3IrrepsArray, Identity
+from facet.layers import Context, E3IrrepsArray, Identity
 
 
 class RadialBasis(nn.Module):
@@ -163,7 +163,7 @@ class ExpCutoff(Envelope):
 if __name__ == '__main__':
     import jax
     import jax.random as jr
-    from cdv.utils import debug_stat, debug_structure
+    from facet.utils import debug_stat, debug_structure
 
     rng = jr.key(123)
     radii = jr.truncated_normal(rng, lower=-3.4, upper=5, shape=(32, 16), dtype=jnp.bfloat16) + 4

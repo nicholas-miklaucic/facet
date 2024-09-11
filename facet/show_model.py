@@ -6,11 +6,11 @@ import pyrallis
 from jax.lib import xla_client
 from flax import linen as nn
 
-from cdv.config import MainConfig
-from cdv.dataset import dataloader
-from cdv.layers import Context
-from cdv.regression import EFSLoss, EFSWrapper
-from cdv.utils import debug_stat, debug_structure, flax_summary, intercept_stat
+from facet.config import MainConfig
+from facet.dataset import dataloader
+from facet.layers import Context
+from facet.regression import EFSLoss, EFSWrapper
+from facet.utils import debug_stat, debug_structure, flax_summary, intercept_stat
 
 
 # https://bnikolic.co.uk/blog/python/jax/2022/02/22/jax-outputgraph-rev.html

@@ -7,8 +7,8 @@ import jax.numpy as jnp
 from flax import linen as nn
 from flax.struct import PyTreeNode
 
-from cdv.databatch import CrystalGraphs
-from cdv.layers import Context
+from facet.databatch import CrystalGraphs
+from facet.layers import Context
 from jaxtyping import Float, Array
 
 

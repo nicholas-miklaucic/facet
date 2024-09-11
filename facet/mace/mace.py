@@ -15,9 +15,9 @@ from jaxtyping import Float, Array, Int
 import json
 from eins import EinsOp
 
-from cdv.databatch import CrystalGraphs
-from cdv.mace import edge_embedding
-from cdv.mace.e3_layers import (
+from facet.databatch import CrystalGraphs
+from facet.mace import edge_embedding
+from facet.mace.e3_layers import (
     E3LayerNorm,
     IrrepsModule,
     Linear,
@@ -25,13 +25,13 @@ from cdv.mace.e3_layers import (
     NonlinearAdapter,
     ResidualAdapter,
 )
-from cdv.layers import SegmentReduction, SegmentReductionKind
-from cdv.layers import Context, E3NormNorm, LazyInMLP, E3Irreps, E3IrrepsArray, edge_vecs
-from cdv.mace.edge_embedding import BesselBasis, ExpCutoff, RadialEmbeddingBlock, GaussBasis
-from cdv.mace.message_passing import SimpleInteraction
-from cdv.mace.node_embedding import NodeEmbedding, SevenNetEmbedding
-from cdv.utils import debug_stat, debug_structure
-from cdv.mace.self_connection import (
+from facet.layers import SegmentReduction, SegmentReductionKind
+from facet.layers import Context, E3NormNorm, LazyInMLP, E3Irreps, E3IrrepsArray, edge_vecs
+from facet.mace.edge_embedding import BesselBasis, ExpCutoff, RadialEmbeddingBlock, GaussBasis
+from facet.mace.message_passing import SimpleInteraction
+from facet.mace.node_embedding import NodeEmbedding, SevenNetEmbedding
+from facet.utils import debug_stat, debug_structure
+from facet.mace.self_connection import (
     EquivariantProductBasisBlock,
     LinearSelfConnection,
     MLPSelfGate,

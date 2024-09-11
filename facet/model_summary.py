@@ -3,8 +3,8 @@
 import ansi2html
 import pyrallis
 import rich.terminal_theme
-from cdv.config import MainConfig
-from cdv.show_model import show_model
+from facet.config import MainConfig
+from facet.show_model import show_model
 import rich
 from contextlib import redirect_stdout
 from io import StringIO

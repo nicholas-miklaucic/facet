@@ -15,11 +15,11 @@ from flax import linen as nn
 from flax.struct import dataclass
 from pyrallis.fields import field
 
-from cdv import layers
-from cdv.e3.activations import S2Activation
-from cdv.layers import E3Irreps, Identity, LazyInMLP
-from cdv.mace.e3_layers import LinearAdapter, NonlinearAdapter
-from cdv.mace.edge_embedding import (
+from facet import layers
+from facet.e3.activations import S2Activation
+from facet.layers import E3Irreps, Identity, LazyInMLP
+from facet.mace.e3_layers import LinearAdapter, NonlinearAdapter
+from facet.mace.edge_embedding import (
     BesselBasis,
     PolynomialCutoff,
     RadialBasis,
@@ -28,25 +28,25 @@ from cdv.mace.edge_embedding import (
     ExpCutoff,
     Envelope,
 )
-from cdv.mace.mace import (
+from facet.mace.mace import (
     MaceModel,
 )
-from cdv.mace.message_passing import (
+from facet.mace.message_passing import (
     NodeFeatureMLPWeightedConv,
     SevenNetConv,
     SimpleInteraction,
     SimpleMixMLPConv,
 )
-from cdv.mace.node_embedding import LinearNodeEmbedding, SevenNetEmbedding
-from cdv.mace.self_connection import (
+from facet.mace.node_embedding import LinearNodeEmbedding, SevenNetEmbedding
+from facet.mace.self_connection import (
     GateSelfConnection,
     LinearSelfConnection,
     MLPSelfGate,
     S2SelfConnection,
 )
-from cdv.regression import EFSLoss, EFSWrapper
-from cdv.schedule_free import schedule_free_adamw
-from cdv.vae import VAE, Decoder, Encoder, LatticeVAE, PropertyPredictor
+from facet.regression import EFSLoss, EFSWrapper
+from facet.schedule_free import schedule_free_adamw
+from facet.vae import VAE, Decoder, Encoder, LatticeVAE, PropertyPredictor
 
 pyrallis.set_config_type('toml')
 

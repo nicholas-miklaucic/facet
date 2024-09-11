@@ -1,12 +1,12 @@
 from typing import Callable
 from flax import linen as nn
 import jax.experimental
-from cdv.mace.e3_layers import E3Irreps, E3IrrepsArray, IrrepsModule, Linear
+from facet.mace.e3_layers import E3Irreps, E3IrrepsArray, IrrepsModule, Linear
 import jax.numpy as jnp
 from e3nn_jax.legacy import FunctionalTensorProduct
 import e3nn_jax as e3nn
-from cdv.layers import Context, LazyInMLP
-from cdv.utils import debug_stat, debug_structure
+from facet.layers import Context, LazyInMLP
+from facet.utils import debug_stat, debug_structure
 import jax
 import functools as ft
 import operator

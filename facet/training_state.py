@@ -22,14 +22,14 @@ from flax import struct
 from flax import linen as nn
 from flax.training import train_state
 
-from cdv.checkpointing import best_ckpt
-from cdv.config import LossConfig, MainConfig
-from cdv.dataset import CrystalGraphs, dataloader
-from cdv.layers import Context
-from cdv.model_summary import model_summary
-from cdv.regression import EFSOutput, EFSWrapper
-from cdv.schedule_free import schedule_free_eval_params
-from cdv.utils import item_if_arr
+from facet.checkpointing import best_ckpt
+from facet.config import LossConfig, MainConfig
+from facet.dataset import CrystalGraphs, dataloader
+from facet.layers import Context
+from facet.model_summary import model_summary
+from facet.regression import EFSOutput, EFSWrapper
+from facet.schedule_free import schedule_free_eval_params
+from facet.utils import item_if_arr
 
 import neptune
 from neptune.types import File

@@ -1,7 +1,7 @@
 """Processes the MPTrj dataset."""
 
 from tqdm import tqdm
-from cdv.databatch import CrystalGraphs, CrystalData, EdgeData, NodeData, MPTrjTarget
+from facet.databatch import CrystalGraphs, CrystalData, EdgeData, NodeData, MPTrjTarget
 from pymatgen.core import Structure
 import numpy as np
 import jax.numpy as jnp
@@ -10,7 +10,7 @@ from pathlib import Path
 import pickle
 import multiprocessing
 
-from cdv.utils import save_pytree
+from facet.utils import save_pytree
 
 num_batch = 32
 k = 16

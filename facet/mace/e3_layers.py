@@ -5,11 +5,11 @@ from typing import Callable, Literal
 import e3nn_jax as e3nn
 import jax.numpy as jnp
 
-from cdv.layers import Context, E3Irreps, E3IrrepsArray
+from facet.layers import Context, E3Irreps, E3IrrepsArray
 from flax import linen as nn
 from eins import Reductions as R
 
-from cdv.utils import debug_structure
+from facet.utils import debug_structure
 
 
 def Linear(*args, **kwargs):

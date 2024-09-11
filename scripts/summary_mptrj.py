@@ -2,11 +2,11 @@
 
 
 from collections import Counter
-from cdv.databatch import CrystalGraphs
-from cdv.dataset import dataloader
+from facet.databatch import CrystalGraphs
+from facet.dataset import dataloader
 from pyrallis import wrap
-from cdv.config import MainConfig
-from cdv.layers import edge_vecs
+from facet.config import MainConfig
+from facet.layers import edge_vecs
 from tqdm import tqdm
 from pymatgen.core import Element
 import jax

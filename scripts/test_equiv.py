@@ -9,13 +9,13 @@ import pyrallis
 from jax.lib import xla_client
 from flax import linen as nn
 
-from cdv.config import MainConfig
-from cdv.databatch import CrystalGraphs
-from cdv.dataset import dataloader
-from cdv.layers import Context
-from cdv.mace.e3_layers import IrrepsModule
-from cdv.regression import EFSLoss, EFSWrapper
-from cdv.utils import debug_stat, debug_structure, flax_summary, intercept_stat, callable_name, signature
+from facet.config import MainConfig
+from facet.databatch import CrystalGraphs
+from facet.dataset import dataloader
+from facet.layers import Context
+from facet.mace.e3_layers import IrrepsModule
+from facet.regression import EFSLoss, EFSWrapper
+from facet.utils import debug_stat, debug_structure, flax_summary, intercept_stat, callable_name, signature
 
 import e3nn_jax as e3nn
 

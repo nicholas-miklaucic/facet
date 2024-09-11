@@ -11,7 +11,7 @@ from flax import linen as nn
 from flax import struct
 from jaxtyping import Array, Float
 
-from cdv.utils import tcheck
+from facet.utils import tcheck
 
 E3Irreps = e3nn.Irreps
 E3IrrepsArray = e3nn.IrrepsArray

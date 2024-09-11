@@ -13,10 +13,10 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 import rho_plus as rp
 
-from cdv.dataset import load_file
-from cdv.layers import LazyInMLP
-from cdv.utils import debug_stat, debug_structure
-from cdv.vae import VAE, Decoder, Encoder, LatticeVAE, PropertyPredictor
+from facet.dataset import load_file
+from facet.layers import LazyInMLP
+from facet.utils import debug_stat, debug_structure
+from facet.vae import VAE, Decoder, Encoder, LatticeVAE, PropertyPredictor
 
 is_dark = False
 theme, cs = rp.mpl_setup(is_dark)
@@ -24,11 +24,11 @@ theme, cs = rp.mpl_setup(is_dark)
 
 from pathlib import Path
 import pyrallis
-from cdv.config import MainConfig
+from facet.config import MainConfig
 import orbax.checkpoint as ocp
 
-from cdv.training_state import TrainingRun
-from cdv.checkpointing import best_ckpt
+from facet.training_state import TrainingRun
+from facet.checkpointing import best_ckpt
 
 run_dir = Path('logs') / 'mace_vae_rec_407'
 
@@ -64,7 +64,7 @@ variables = ckpt['state']['params']
 rngs = {
     'noise': jr.key(123)
 }
-from cdv.layers import Context, LazyInMLP
+from facet.layers import Context, LazyInMLP
 
 d = 3
 mesh = Mesh(mesh_utils.create_device_mesh((d,), devices=jax.devices()[:d]), 'batch')

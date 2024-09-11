@@ -1,10 +1,10 @@
-from cdv.train_e_form import MainConfig, run_using_dashboard
+from facet.train_e_form import MainConfig, run_using_dashboard
 from pyrallis import cfgparsing
 from time import monotonic
 import rich
 
-from cdv.training_runner import run_using_progress
-from cdv.training_state import TrainingRun
+from facet.training_runner import run_using_progress
+from facet.training_state import TrainingRun
 
 if __name__ == '__main__':
     with open('configs/profiling.toml', 'r') as cfg:

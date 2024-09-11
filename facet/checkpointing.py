@@ -6,7 +6,7 @@ from pathlib import Path
 import orbax.checkpoint as ocp
 import pyrallis
 
-from cdv.config import MainConfig
+from facet.config import MainConfig
 
 
 def run_config(run_dir: PathLike):

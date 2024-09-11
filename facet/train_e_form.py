@@ -2,8 +2,8 @@
 
 from pyrallis import wrap
 
-from cdv.config import MainConfig
-from cdv.training_runner import run_quietly, run_using_dashboard, run_using_progress
+from facet.config import MainConfig
+from facet.training_runner import run_quietly, run_using_dashboard, run_using_progress
 
 
 @wrap()

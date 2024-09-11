@@ -1,9 +1,9 @@
 """Training state runner interface."""
 
 from time import sleep
-from cdv.config import MainConfig
-from cdv.dashboard import Dashboard
-from cdv.training_state import TrainingRun
+from facet.config import MainConfig
+from facet.dashboard import Dashboard
+from facet.training_state import TrainingRun
 
 
 def run_using_dashboard(config: MainConfig):

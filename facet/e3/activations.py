@@ -6,7 +6,7 @@ import jax.numpy as jnp
 from flax import linen as nn
 import rich.table
 
-from cdv.layers import Context, E3Irreps, E3IrrepsArray
+from facet.layers import Context, E3Irreps, E3IrrepsArray
 
 
 import yaml

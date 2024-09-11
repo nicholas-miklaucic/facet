@@ -17,9 +17,9 @@ from textual.widgets import DataTable, Footer, Header, ProgressBar
 from textual.worker import get_current_worker
 from textual_plotext import PlotextPlot
 
-from cdv.config import MainConfig
-from cdv.training_state import TrainingRun
-from cdv.utils import format_scalar
+from facet.config import MainConfig
+from facet.training_state import TrainingRun
+from facet.utils import format_scalar
 
 
 class Losses(PlotextPlot):

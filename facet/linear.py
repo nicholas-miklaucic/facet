@@ -5,7 +5,7 @@ import jax.numpy as jnp
 from jaxtyping import Float, Array
 from flax import linen as nn
 
-from cdv.layers import Context
+from facet.layers import Context
 
 class AbstractLinear(nn.Module):
     """Linear layer."""

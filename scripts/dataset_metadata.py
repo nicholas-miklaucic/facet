@@ -1,9 +1,9 @@
 """Generates the necessary metadata for a dataset."""
 
-from cdv.dataset import dataloader
+from facet.dataset import dataloader
 from pyrallis import wrap
-from cdv.config import MainConfig
-from cdv.layers import edge_vecs
+from facet.config import MainConfig
+from facet.layers import edge_vecs
 from itertools import chain
 from rich.progress import track
 from pymatgen.core import Element

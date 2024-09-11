@@ -8,7 +8,7 @@ import flax
 import flax.linen as nn
 import numpy as np
 import pandas as pd
-from cdv.databatch import CrystalGraphs, NodeData, EdgeData, CrystalData, DIMENSIONALITIES
+from facet.databatch import CrystalGraphs, NodeData, EdgeData, CrystalData, DIMENSIONALITIES
 
 ELEM_VALS = (
     'K Rb Ba Na Sr Li Ca La Tb Yb Ce Pr Nd Sm Dy Y Ho Er Tm Hf Mg Zr Sc U Ta Ti Mn Be Nb Al Tl V Zn Cr Cd'

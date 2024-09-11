@@ -8,10 +8,10 @@ import jax.numpy as jnp
 from jaxtyping import Float, Array
 
 
-from cdv.e3.activations import S2Activation
-from cdv.layers import Context, LazyInMLP, E3Irreps, E3IrrepsArray
-from cdv.mace.e3_layers import IrrepsModule, Linear
-from cdv.utils import debug_structure
+from facet.e3.activations import S2Activation
+from facet.layers import Context, LazyInMLP, E3Irreps, E3IrrepsArray
+from facet.mace.e3_layers import IrrepsModule, Linear
+from facet.utils import debug_structure
 
 
 def safe_norm(x: jnp.ndarray, axis: int = None, keepdims=False) -> jnp.ndarray:

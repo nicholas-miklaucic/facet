@@ -14,8 +14,8 @@ import zarr
 from beartype.roar import BeartypeDecorHintPep585DeprecationWarning
 from flax.serialization import from_state_dict, to_state_dict
 
-from cdv.databatch import CrystalGraphs, collate
-from cdv.utils import debug_structure, load_pytree
+from facet.databatch import CrystalGraphs, collate
+from facet.utils import debug_structure, load_pytree
 
 filterwarnings('ignore', category=BeartypeDecorHintPep585DeprecationWarning)
 
@@ -195,7 +195,7 @@ def dataloader(
 if __name__ == '__main__':
     import numpy as np
 
-    from cdv.config import MainConfig
+    from facet.config import MainConfig
 
     config = pyrallis.parse(config_class=MainConfig)
     config.cli.set_up_logging()

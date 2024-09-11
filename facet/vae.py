@@ -7,13 +7,13 @@ from flax import struct
 import jax
 import optax
 
-from cdv.databatch import CrystalGraphs
-from cdv.layers import Context, LazyInMLP
+from facet.databatch import CrystalGraphs
+from facet.layers import Context, LazyInMLP
 from jaxtyping import Float, Array
 import jax.numpy as jnp
 import jax.random as jr
 
-from cdv.mace.mace import MaceModel
+from facet.mace.mace import MaceModel
 
 
 class LatentOutput(struct.PyTreeNode):
