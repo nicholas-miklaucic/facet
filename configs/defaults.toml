@@ -1,11 +1,10 @@
 batch_size = 32
 stack_size = 1
-do_profile = false
 num_epochs = 20
+precision = "f32"
 debug_mode = false
+do_profile = false
 display = "dashboard"
-regressor = "mace"
-task = "e_form"
 
 [data]
 dataset_name = "mptrj"
@@ -37,48 +36,54 @@ epochs_per_valid = 2
 tags = []
 
 [train]
-lr_schedule_kind = "cosine"
-start_lr_frac = 0.1
-base_lr = 0.004
-end_lr_frac = 0.04
-weight_decay = 0.03
-beta_1 = 0.9
-beta_2 = 0.999
-nestorov = true
+base_lr = 1.0
 max_grad_norm = 3.0
-schedule_free = false
-prodigy = false
 
-[mace]
+[model]
 residual = false
-hidden_irreps = [ "128x0e + 64x1o + 32x2e", "128x0e + 64x1o + 32x2e",]
+resid_init = "zeros"
 outs_per_node = 64
-interaction_reduction = "last"
+block_reduction = "last"
 share_species_embed = true
 
 [train.loss]
 energy_weight = 1
-force_weight = 0.1
-stress_weight = 0.01
+force_weight = 0
+stress_weight = 0
 
-[mace.node_embed]
+[train.lr_schedule]
+kind = "polynomial"
+warmup_frac = 0.1
+start_lr = 0.01
+end_lr = 0.01
+power = 1.0
+
+[train.optimizer]
+base_lr = 1.0
+kind = "prodigy"
+weight_decay = 0.001
+beta_1 = 0.9
+beta_2 = 0.999
+
+[model.node_embed]
 embed_dim = 64
 kind = "linear"
 
-[mace.edge_embed]
-r_max = 5
-r_max_trainable = false
+[model.edge_embed]
+r_max = 7
+r_max_trainable = true
+radius_transform = "Identity"
 
-[mace.interaction]
+[model.interaction]
 kind = "simple"
 
-[mace.readout]
+[model.readout]
 kind = "linear"
 
-[mace.self_connection]
-kind = "gate"
+[model.self_connection]
+kind = "s2-mlp-mixer"
 
-[mace.head]
+[model.head]
 inner_dims = []
 activation = "swish"
 final_activation = "Identity"
@@ -86,27 +91,47 @@ dropout = 0.0
 residual = false
 num_heads = 1
 use_bias = false
+normalization = "layer"
+
+[model.hidden_irreps]
+kind = "derived"
+dim = 384
+max_degree = 2
+gamma = 0.5
+num_layers = 2
+min_gcd = 2
 
 [train.loss.reg_loss]
 loss_delta = 0.015625
 use_rmse = false
 
-[mace.edge_embed.radial_basis]
-num_basis = 10
-kind = "bessel"
-freq_trainable = true
+[model.edge_embed.radial_basis]
+num_basis = 16
+kind = "gauss"
+mu_max = 7
+sd = 0.25
+mu_trainable = true
+sd_trainable = true
 
-[mace.edge_embed.envelope]
+[model.edge_embed.envelope]
 kind = "exp"
-cutoff_start = 0.9
+cutoff_start = 0.8
 c = 0.1
 
-[mace.interaction.message]
-kind = "simple-mix-mlp-conv"
+[model.interaction.message]
+kind = "sevennet-conv"
 avg_num_neighbors = 14
-max_ell = 3
+max_ell = 2
 
-[mace.interaction.message.radial_mix]
+[model.self_connection.s2_grid]
+activation = "silu"
+res_beta = 16
+res_alpha = 15
+normalization = "integral"
+quadrature = "soft"
+use_fft = false
+
+[model.self_connection.mlp]
 inner_dims = []
 activation = "swish"
 final_activation = "Identity"
@@ -114,3 +139,15 @@ dropout = 0.0
 residual = false
 num_heads = 1
 use_bias = false
+normalization = "layer"
+
+[model.interaction.message.radial_weight]
+inner_dims = [64, 64]
+activation = "swish"
+final_activation = "shifted_softplus"
+out_dim = 0
+dropout = 0.0
+residual = false
+num_heads = 1
+use_bias = false
+normalization = "layer"

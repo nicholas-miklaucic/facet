@@ -24,7 +24,7 @@ from facet.mace.e3_layers import IrrepsModule
 from facet.regression import EFSLoss, EFSWrapper
 from facet.utils import debug_stat, debug_structure, flax_summary, intercept_stat, callable_name, signature
 
-import e3nn_jax as e3nn
+import e3nn_jax as e3nn  # type: ignore
 
 def add_with_duplicated_name(d: dict, k, v):
     prefix = 0

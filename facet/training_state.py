@@ -1,5 +1,6 @@
 from dataclasses import field
 import functools as ft
+import logging
 import random
 import shutil
 import time
@@ -8,14 +9,14 @@ from datetime import datetime, timedelta
 from os import PathLike
 from pathlib import Path
 from shutil import copytree, make_archive
-from typing import Any, Literal, Mapping, Sequence
+from typing import Any, Literal, Mapping, Sequence, Union
 
 import chex
 import jax
 import jax.numpy as jnp
 import numpy as np
-import optax
-import orbax.checkpoint as ocp
+import optax  # type: ignore
+import orbax.checkpoint as ocp  # type: ignore
 import pandas as pd
 import pyrallis
 from flax import struct
@@ -27,12 +28,10 @@ from facet.config import LossConfig, MainConfig
 from facet.dataset import CrystalGraphs, dataloader
 from facet.layers import Context
 from facet.model_summary import model_summary
-from facet.regression import EFSOutput, EFSWrapper
-from facet.schedule_free import schedule_free_eval_params
-from facet.utils import item_if_arr
+from facet.utils import debug_structure, get_nested_path, item_if_arr
 
-import neptune
-from neptune.types import File
+import neptune  # type: ignore
+from neptune.types import File  # type: ignore
 
 
 @struct.dataclass
@@ -58,7 +57,7 @@ class TrainState(train_state.TrainState):
     last_grad_norm: float
 
     def replicate_params(self, devices: set[jax.Device]):
-        return jax.device_put_replicated(self.params, devices)
+        return jax.device_put_replicated(self.params, tuple(devices))
 
 
 def create_train_state(module: nn.Module, optimizer, rng, batch: CrystalGraphs):
@@ -89,14 +88,10 @@ class TrainingRun:
     def __init__(self, config: MainConfig):
         self.seed = random.randint(100, 1000)
         self.rng = {'params': jax.random.key(self.seed)}
-        if config.task == 'diled':
-            self.rng['params'], self.rng['noise'], self.rng['time'] = jax.random.split(
-                self.rng['params'], 3
-            )
-        print(f'Seed: {self.seed}')
+        logging.info(f'Seed: {self.seed}')
         self.config = config
 
-        self.metrics_history = defaultdict(list)
+        self.metrics_history: Mapping[str, list[Any]] = defaultdict(list)
         self.num_epochs = config.num_epochs
         self.steps_in_epoch, self.dl = dataloader(config, split='train', infinite=True)
         self.steps_in_test_epoch, self.test_dl = dataloader(config, split='valid', infinite=True)
@@ -104,10 +99,10 @@ class TrainingRun:
         self.steps = range(self.num_steps)
         self.curr_step = 0
         self.start_time = time.monotonic()
-        self.scheduler = self.config.train.lr_schedule(
+        self.scheduler = self.config.train.build_lr_schedule(
             num_epochs=self.num_epochs, steps_in_epoch=self.steps_in_epoch
         )
-        self.optimizer = self.config.train.optimizer(self.scheduler)
+        self.optimizer = self.config.train.build_optimizer(self.scheduler)
         self.model = self.make_model()
         self.metrics = Metrics()
 
@@ -131,10 +126,10 @@ class TrainingRun:
     def init_run(self) -> neptune.Run:
         run = neptune.init_run(
             mode='debug' if self.config.debug_mode else 'async',
-            tags=[self.config.task] + self.config.log.tags,
+            tags=self.config.log.tags,
             capture_stderr=False,
             capture_stdout=False,
-            source_files='cdv/**/*.py',
+            source_files='facet/**/*.py',
         )
 
         run['parameters'] = self.config.as_dict()
@@ -152,34 +147,27 @@ class TrainingRun:
         return run
 
     @staticmethod
-    @ft.partial(jax.jit, static_argnames=('task', 'config'))
+    @ft.partial(jax.jit, static_argnames=('config',))
     @chex.assert_max_traces(5)
     def compute_metrics(
         *,
-        task: str,
         config: LossConfig,
         state: TrainState,
         batch: CrystalGraphs,
         preds,
         rng=None,
     ):
-        if task == 'e_form' or task == 'diled' or task == 'vae':
-            losses = {k: jnp.mean(v) for k, v in preds.items()}
-            losses['grad_norm'] = state.last_grad_norm
-            metric_updates = dict(**losses)
-        else:
-            msg = f'Unknown task {task}'
-            raise ValueError(msg)
+        losses: dict[str, Union[float, jax.Array]] = {k: jnp.mean(v) for k, v in preds.items()}
+        losses['grad_norm'] = state.last_grad_norm
+        metric_updates = dict(**losses)
 
         state = state.replace(metrics=state.metrics.update(**metric_updates))
         return state
 
     @staticmethod
-    @ft.partial(jax.jit, static_argnames=('task', 'config'))
+    @ft.partial(jax.jit, static_argnames=('config',))
     @chex.assert_max_traces(5)
-    def test_preds(
-        task: str, config: LossConfig, state: TrainState, params, batch: CrystalGraphs, rng
-    ):
+    def test_preds(config: LossConfig, state: TrainState, params, batch: CrystalGraphs, rng):
         """Evaluate metrics for a single batch."""
         rngs = {k: v for k, v in rng.items()} if isinstance(rng, dict) else {'params': rng}
         rng = jax.random.fold_in(rngs['params'], state.step)
@@ -189,19 +177,15 @@ class TrainingRun:
         from jax.sharding import Mesh, PartitionSpec as P
 
         devs = jax.local_devices()
-        mesh = Mesh(mesh_utils.create_device_mesh(len(devs), devices=devs), 'batch')
+        mesh = Mesh(mesh_utils.create_device_mesh([len(devs)], devices=devs), 'batch')
 
         @ft.partial(jax.vmap, in_axes=(None, 0))
         def loss_fn(params, batch):
-            if task == 'e_form':
-                preds = config.efs_wrapper(
-                    state.apply_fn, params, batch, ctx=Context(training=True), rngs=rng
-                )
-                loss = config.efs_loss(batch, preds)
-                return loss
-            else:
-                preds = state.apply_fn(params, batch, ctx=Context(training=True), rngs=rng)
-                return preds['loss'].mean(axis=-1), preds
+            preds = config.efs_wrapper(
+                state.apply_fn, params, batch, ctx=Context(training=True), rngs=rng
+            )
+            loss = config.efs_loss(batch, preds)
+            return loss
 
         @ft.partial(
             shard_map,
@@ -218,11 +202,9 @@ class TrainingRun:
         return loss
 
     @staticmethod
-    @ft.partial(jax.jit, static_argnames=('task', 'config'))
+    @ft.partial(jax.jit, static_argnames=('config',))
     @chex.assert_max_traces(5)
-    def train_grads(
-        task: str, config: LossConfig, state: TrainState, params, batch: CrystalGraphs, rng
-    ):
+    def train_grads(config: LossConfig, state: TrainState, params, batch: CrystalGraphs, rng):
         """Train for a single step."""
         rngs = {k: v for k, v in rng.items()} if isinstance(rng, dict) else {'params': rng}
         rng = jax.random.fold_in(rngs['params'], state.step)
@@ -232,18 +214,14 @@ class TrainingRun:
         from jax.sharding import Mesh, PartitionSpec as P
 
         devs = jax.local_devices()
-        mesh = Mesh(mesh_utils.create_device_mesh(len(devs), devices=devs), 'batch')
+        mesh = Mesh(mesh_utils.create_device_mesh([len(devs)], devices=devs), 'batch')
 
         def loss_fn(params, batch):
-            if task == 'e_form':
-                preds = config.efs_wrapper(
-                    state.apply_fn, params, batch, ctx=Context(training=True), rngs=rng
-                )
-                loss = config.efs_loss(batch, preds)
-                return loss['loss'].mean(), loss
-            else:
-                preds = state.apply_fn(params, batch, ctx=Context(training=True), rngs=rng)
-                return preds['loss'].mean(axis=-1), preds
+            preds = config.efs_wrapper(
+                state.apply_fn, params, batch, ctx=Context(training=True), rngs=rng
+            )
+            loss = config.efs_loss(batch, preds)
+            return loss['loss'].mean(), loss
 
         @ft.partial(jax.vmap, in_axes=(None, 0))
         def vgrad_fn(params, batch):
@@ -279,11 +257,11 @@ class TrainingRun:
         return state
 
     @staticmethod
-    def train_step(task: str, config: LossConfig, state: TrainState, batch: CrystalGraphs, rng):
+    def train_step(config: LossConfig, state: TrainState, batch: CrystalGraphs, rng):
         """Train for a single step."""
         # debug_structure(state.params)
         # debug_structure(batch)
-        grads, preds = TrainingRun.train_grads(task, config, state, state.params, batch, rng)
+        grads, preds = TrainingRun.train_grads(config, state, state.params, batch, rng)
         # debug_structure(grads=grads, preds=preds)
         # print('params')
         # jax.debug.visualize_array_sharding(jax.tree_leaves(state.params)[0].reshape(-1))
@@ -293,12 +271,7 @@ class TrainingRun:
         return state, preds
 
     def make_model(self):
-        if self.config.task == 'e_form':
-            return self.config.build_regressor()
-        elif self.config.task == 'vae':
-            return self.config.build_vae()
-        else:
-            raise ValueError
+        return self.config.build_regressor()
 
     def next_step(self):
         return self.step(self.curr_step + 1, next(self.dl))
@@ -318,11 +291,7 @@ class TrainingRun:
 
     @property
     def eval_state(self) -> TrainState:
-        if self.config.train.schedule_free:
-            params = schedule_free_eval_params(self.state.opt_state, self.state.params)
-            return self.state.replace(params=params)
-        else:
-            return self.state
+        return self.state
 
     def step(self, step: int, batch: CrystalGraphs):
         self.curr_step = step
@@ -346,17 +315,22 @@ class TrainingRun:
                     lambda x, y: x + y, jax.tree.map(lambda x: x.size, self.state.params)
                 )
             )
+
+            for path in self.config.log.log_params:
+                param = get_nested_path(self.state.params['params'], path)
+                if param is None:
+                    logging.warn(f'Could not find parameter {path}')
+                    # debug_structure(params=self.state.params['params'])
         elif step >= self.num_steps:
             return None
 
         kwargs = dict(
-            task=self.config.task,
             config=self.config.train.loss,
             batch=batch,
             rng=self.rng,
         )
 
-        self.state, preds = self.train_step(state=self.state, **kwargs)
+        self.state, preds = self.train_step(state=self.state, **kwargs)  # type: ignore
         # jax.debug.visualize_array_sharding(preds[..., 0])
         self.state = self.compute_metrics(preds=preds, state=self.eval_state, **kwargs)
 
@@ -399,6 +373,19 @@ class TrainingRun:
                 size = (curr - prev) * self.config.batch_size * self.config.stack_size
                 self.log_metric('throughput', size / min_delta, None)
 
+                # log specific parameters
+                for path in self.config.log.log_params:
+                    param = get_nested_path(self.state.params['params'], path)
+                    if param is not None:
+                        if param.size == 1:
+                            self.run[f'model_params/{path}'].append(param.item())
+                        elif param.size <= 64:  # nothing too crazy!
+                            for i, val in enumerate(param.flatten()):
+                                self.run[f'model_params/{path}/{i}'].append(val)
+                        else:
+                            # we don't want to accidentally upload a million values
+                            continue
+
         # debug_structure(self.state)
         # print(self.metrics_history)
 
@@ -407,7 +394,6 @@ class TrainingRun:
             self.test_state = self.eval_state.replace(metrics=Metrics())
             for _i, test_batch in zip(range(self.steps_in_test_epoch), self.test_dl):
                 test_preds = TrainingRun.test_preds(
-                    self.config.task,
                     self.config.train.loss,
                     self.test_state,
                     self.test_state.params,
@@ -416,7 +402,6 @@ class TrainingRun:
                 )
 
                 self.test_state = self.compute_metrics(
-                    task=self.config.task,
                     config=self.config.train.loss,
                     state=self.test_state,
                     batch=test_batch,
@@ -434,7 +419,7 @@ class TrainingRun:
             # print(self.test_loss)
             self.mngr.save(
                 self.curr_step,
-                args=ocp.args.StandardSave(self.ckpt()),
+                args=ocp.args.StandardSave(self.ckpt()),  # type: ignore
                 metrics={'te_loss': self.test_loss},
             )
 
@@ -495,7 +480,7 @@ class TrainingRun:
 
     @property
     def lr(self):
-        return self.scheduler(self.curr_step).item()
+        return item_if_arr(self.scheduler(self.curr_step))  # type: ignore
 
     def ckpt(self):
         """Checkpoint PyTree."""
@@ -510,6 +495,9 @@ class TrainingRun:
             copytree(self.mngr.directory, Path(out_dir) / 'ckpts/')
 
     def finish(self):
+        if self.config.debug_mode:
+            return '/dev/null'
+
         now = datetime.now()
         if self.config.log.exp_name is None:
             exp_name = now.strftime('%m-%d-%H-%M')

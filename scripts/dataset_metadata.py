@@ -55,7 +55,7 @@ def main(config: MainConfig):
 
     print(list(dist_centers), list(dist_counts))
 
-    with open(config.data.dataset_folder / 'metadata2.json', 'w') as out:
+    with open(config.data.dataset_folder / 'metadata.json', 'w') as out:
         json.dump({
             'elements': elements,
             'element_indices': element_inds.astype(int).tolist(),

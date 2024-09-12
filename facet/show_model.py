@@ -1,3 +1,5 @@
+"""Shows a large summary of a model."""
+
 import subprocess
 
 import jax
@@ -20,7 +22,7 @@ def to_dot_graph(x):
 
 def show_model(config: MainConfig, make_hlo_dot=False, do_profile=False, show_stat=False):
     # print(config.data.avg_dist(6), config.data.avg_num_neighbors(6))
-    kwargs = dict(ctx=Context(training=True))
+    kwargs = dict(ctx=Context(training=False))
     num_batches, dl = dataloader(config, split='train', infinite=True)
     for i, b in zip(range(2), dl):
         batch = b
@@ -29,12 +31,8 @@ def show_model(config: MainConfig, make_hlo_dot=False, do_profile=False, show_st
 
     # debug_structure(batch=batch)
 
-    if config.task == 'e_form':
-        mod = config.build_regressor()
-        rngs = {}
-    elif config.task == 'vae':
-        mod = config.build_vae()
-        rngs = {'noise': jax.random.key(123)}
+    mod = config.build_regressor()
+    rngs = {}
 
     rngs['params'] = jax.random.key(0)
     rngs['dropout'] = jax.random.key(1)
@@ -55,10 +53,7 @@ def show_model(config: MainConfig, make_hlo_dot=False, do_profile=False, show_st
     def loss_fn(params, preds=None):
         if preds is None:
             preds = apply_fn(params, batch)
-        if config.task == 'e_form':
-            return jax.tree_map(jnp.mean, jax.vmap(config.train.loss.efs_loss)(batch, preds))
-        else:
-            return preds
+        return jax.tree_map(jnp.mean, jax.vmap(config.train.loss.efs_loss)(batch, preds))
 
     with jax.debug_nans():
         out = apply_fn(params, batch)

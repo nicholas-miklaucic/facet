@@ -3,10 +3,7 @@ MACE network code. Adapted from https://github.com/ACEsuit/mace-jax.
 """
 
 from collections.abc import Sequence
-import functools
-import math
-from typing import Callable, Literal, Optional
-from typing import Set, Union
+from typing import Callable, Literal
 from flax import linen as nn
 import e3nn_jax as e3nn
 import jax
@@ -16,25 +13,17 @@ import json
 from eins import EinsOp
 
 from facet.databatch import CrystalGraphs
-from facet.mace import edge_embedding
 from facet.mace.e3_layers import (
     E3LayerNorm,
     IrrepsModule,
-    Linear,
-    LinearAdapter,
-    NonlinearAdapter,
     ResidualAdapter,
 )
-from facet.layers import SegmentReduction, SegmentReductionKind
-from facet.layers import Context, E3NormNorm, LazyInMLP, E3Irreps, E3IrrepsArray, edge_vecs
-from facet.mace.edge_embedding import BesselBasis, ExpCutoff, RadialEmbeddingBlock, GaussBasis
+from facet.layers import SegmentReduction
+from facet.layers import Context, LazyInMLP, E3Irreps, E3IrrepsArray, edge_vecs
+from facet.mace.edge_embedding import RadialEmbeddingBlock
 from facet.mace.message_passing import SimpleInteraction
-from facet.mace.node_embedding import NodeEmbedding, SevenNetEmbedding
-from facet.utils import debug_stat, debug_structure
+from facet.mace.node_embedding import NodeEmbedding
 from facet.mace.self_connection import (
-    EquivariantProductBasisBlock,
-    LinearSelfConnection,
-    MLPSelfGate,
     SelfConnectionBlock,
 )
 
@@ -58,6 +47,35 @@ class SpeciesWiseRescale(nn.Module):
 
     def __call__(self, energies, node_species):
         return energies + self.values[node_species]
+
+
+class LearnedSpeciesWiseRescale(nn.Module):
+    """Standard embedding layer."""
+
+    num_species: int
+    element_indices: Int[Array, ' max_species']
+    shift_trainable: bool
+    scale_trainable: bool
+
+    def setup(self):
+        def loc_init(rng):
+            return jnp.zeros(self.num_species, dtype=jnp.float32)
+
+        if self.shift_trainable:
+            self.shift = self.param('shift', loc_init)
+        else:
+            self.shift = loc_init(None)
+
+        def sd_init(rng):
+            return jnp.ones(self.num_species, dtype=jnp.float32)
+
+        if self.scale_trainable:
+            self.scale = self.param('scale', sd_init)
+        else:
+            self.scale = sd_init(None)
+
+    def __call__(self, energies, node_species):
+        return energies * self.scale[node_species] + self.shift[node_species]
 
 
 class MACELayer(nn.Module):
@@ -204,6 +222,8 @@ class MaceModel(nn.Module):
     head_templ: LazyInMLP
     residual: bool
     resid_init: Callable
+    rescale: nn.Module
+    out_shift_scale: tuple[float, float]
 
     precision: Literal['f32', 'bf16']
     outs_per_node: int
@@ -211,7 +231,7 @@ class MaceModel(nn.Module):
 
     # How to combine the outputs of different interaction blocks.
     # 'last' is special: it means the last block.
-    interaction_reduction: str = 'last'
+    block_reduction: str = 'last'
 
     def setup(self):
         self.mace = MACE(
@@ -222,13 +242,12 @@ class MaceModel(nn.Module):
             interaction_templ=self.interaction,
             self_connection_templ=self.self_connection,
             readout_templ=self.readout,
-            only_last_readout=self.interaction_reduction == 'last',
+            only_last_readout=self.block_reduction == 'last',
             share_species_embed=self.share_species_embed,
             residual=self.residual,
             resid_init=self.resid_init,
         )
 
-        self.rescale = SpeciesWiseRescale()
         self.norm = nn.LayerNorm()
         self.node2graph_reduction = SegmentReduction('mean')
         self.head = self.head_templ.copy(out_dim=1, name='head')
@@ -249,12 +268,10 @@ class MaceModel(nn.Module):
             ctx=ctx,
         ).array
 
-        if self.interaction_reduction == 'last':
+        if self.block_reduction == 'last':
             out = mace_out[..., -1, :]
         else:
-            out = EinsOp('nodes blocks mul -> nodes mul', reduce=self.interaction_reduction)(
-                mace_out
-            )
+            out = EinsOp('nodes blocks mul -> nodes mul', reduce=self.block_reduction)(mace_out)
 
         out = self.norm(out)
 
@@ -264,4 +281,6 @@ class MaceModel(nn.Module):
             scaled_out, cg.nodes.graph_i, cg.n_total_graphs, ctx=ctx
         )[..., None]
 
-        return graph_out
+        out_shift, out_scale = self.out_shift_scale
+
+        return graph_out * out_scale + out_shift

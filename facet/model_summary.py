@@ -11,11 +11,11 @@ from io import StringIO
 
 
 def model_summary(config: MainConfig, write_to_file: bool = False, print_summary: bool = False):
-    cfg_dict = pyrallis.encode(config)
+    cfg_dict = pyrallis.encode(config)  # type: ignore
     cfg_dict['batch_size'] = 32
     cfg_dict['stack_size'] = 1
-    cfg_dict['mace']['resid_init'] = 'zeros'
-    config = pyrallis.decode(MainConfig, cfg_dict)
+    cfg_dict['model']['resid_init'] = 'zeros'
+    config = pyrallis.decode(MainConfig, cfg_dict)  # type: ignore
     with StringIO() as data, redirect_stdout(data):
         rich.reconfigure(width=200, force_terminal=True, color_system='truecolor')
         cost = show_model(config, make_hlo_dot=False, do_profile=False, show_stat=False)
@@ -40,4 +40,4 @@ def model_summary_interactive(config: MainConfig):
 
 
 if __name__ == '__main__':
-    model_summary_interactive()
+    model_summary_interactive()  # type: ignore

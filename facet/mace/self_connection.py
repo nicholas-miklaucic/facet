@@ -14,7 +14,7 @@ from facet.mace.e3_layers import IrrepsModule, Linear
 from facet.utils import debug_structure
 
 
-def safe_norm(x: jnp.ndarray, axis: int = None, keepdims=False) -> jnp.ndarray:
+def safe_norm(x: jnp.ndarray, axis: int | None = None, keepdims=False) -> jnp.ndarray:
     """nan-safe norm."""
     x2 = jnp.sum(x**2, axis=axis, keepdims=keepdims)
     return jnp.where(x2 == 0.0, 0.0, jnp.where(x2 == 0, 1.0, x2) ** 0.5)

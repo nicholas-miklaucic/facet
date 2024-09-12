@@ -1,4 +1,4 @@
-"""Processes the MPTrj dataset."""
+"""Processes the MP2022 dataset."""
 
 from tqdm import tqdm
 from facet.databatch import CrystalGraphs, CrystalData, EdgeData, NodeData, MPTrjTarget
@@ -20,8 +20,8 @@ target_batch_size = num_batch * num_atoms - 1
 overwrite = False
 num_processes = 1
 
-data_folder = Path('precomputed') / 'mptrj'
-graphs_folder = Path('/home/nmiklaucic/mat-graph/crystallographic_graph/knns')
+data_folder = Path('precomputed') / 'mp2022'
+graphs_folder = Path('/home/nmiklaucic/mat-graph/crystallographic_graph/knns_mp2022')
 
 if num_processes > 1:
     tqdm = lambda x, **kwargs: x
@@ -62,15 +62,15 @@ def create_graph(row, data_id, graph_data):
     )
 
     data = CrystalData(
-        dataset_id=jnp.array([data_id], dtype=np.uint64),
+        dataset_id=jnp.array([data_id], dtype=np.uint32),
         abc=jnp.array([struct.lattice.abc]),
         angles_rad=jnp.deg2rad(jnp.array([struct.lattice.angles])),
         lat=jnp.array([struct.lattice.matrix])
     )
     target = MPTrjTarget(
-        e_form=jnp.array([row['energy_per_atom']]),    
-        force=jnp.array(row['force']),
-        stress=jnp.array([row['stress']]),
+        e_form=jnp.array([row['energy']]),    
+        force=jnp.zeros_like(nodes.cart),
+        stress=jnp.array([struct.lattice.matrix * 0]),
     )
     # diag = np.sqrt(np.sum(np.array(struct.lattice.abc) ** 2)) + 1
     # edges = knn_graph(struct, r_start=diag * np.cbrt(k / struct.num_sites))
@@ -118,14 +118,12 @@ def process_batch(batch_name):
         graphs = pickle.load(graph_f)
         
 
-    out_path = data_folder / 'batches' / f'group_{batch_name}'
+    out_path = data_folder / 'batches' / f'group_{batch_name}'    
     out_path.mkdir(exist_ok=True, parents=True)
 
     sizes = [s.num_sites for s in df['structure']]
     
-    data_id = df['mp_id'].str.replace('mp-', '1').str.replace('mvc-', '2').astype(int) * 10_000
-    data_id += df['calc'] * 1_000
-    data_id += df['step']
+    data_id = df['dataset-id'].str.replace('mp-', '').str.replace('mvc-', '90').str.replace('-GGA', '').str.replace('+U', '').astype(int)
 
     orig_size = len(sizes)
     parts, part_sizes = padded_parts(sizes)
@@ -147,7 +145,7 @@ if __name__ == '__main__':
     # import multiprocessing            
     import gc
     from rich.prompt import Confirm
-    if not Confirm.ask('Regenerate batched MPTrj files?'):
+    if not Confirm.ask('Regenerate batched MP2022 files?'):
         raise RuntimeError('Aborted')
     
     if num_processes > 1:

@@ -1,3 +1,4 @@
 {
-    "python.defaultInterpreterPath": "/home/nmiklaucic/miniconda3/envs/avid/bin/python"
+    "python.defaultInterpreterPath": "/home/nmiklaucic/miniconda3/envs/avid/bin/python",
+    "python.analysis.typeCheckingMode": "basic"
 }

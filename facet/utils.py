@@ -28,12 +28,6 @@ from rich.tree import Tree
 # checker = typechecker(conf=BeartypeConf(is_color=False))
 tcheck = partial(jaxtyped, typechecker=None)
 
-# TODO make this dataset-specific
-ELEM_VALS = (
-    'K Rb Ba Na Sr Li Ca La Tb Yb Ce Pr Nd Sm Dy Y Ho Er Tm Hf Mg Zr Sc U Ta Ti Mn Be Nb Al Tl V Zn Cr Cd'
-    ' In Ga Fe Co Cu Si Ni Ag Sn Hg Ge Bi B Sb Te Mo As P H Ir Os Pd Ru Pt Rh Pb W Au C Se S I Br N Cl O F'
-).split(' ')
-
 INFERNA = [
     '#e6ab00',
     '#eb9900',
@@ -52,6 +46,20 @@ INFERNA = [
     '#2f23a3',
     '#00229c',
 ]
+
+
+def get_nested_path(mapping, path: str):
+    """Parses a nested path syntax with slashes to key a dictionary, returning None if no such path
+    exists."""
+    if '/' in path:
+        head, tail = path.split('/', maxsplit=1)
+        child = mapping.get(head)
+        if child is None:
+            return None
+        else:
+            return get_nested_path(child, tail)
+    else:
+        return mapping.get(path)
 
 
 def format_scalar(scalar: int | float, chars=6) -> str:
@@ -89,7 +97,7 @@ def format_scalar(scalar: int | float, chars=6) -> str:
 
 def item_if_arr(x: int | float | jax.Array) -> float:
     if isinstance(x, (int, float)):
-        return x
+        return float(x)
     else:
         return x.item()
 

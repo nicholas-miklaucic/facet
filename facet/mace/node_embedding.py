@@ -4,9 +4,9 @@ Global data would also be incorporated here, but the two are mostly orthogonal.
 """
 
 from flax import linen as nn
-from facet.mace.e3_layers import E3Irreps, E3IrrepsArray, IrrepsModule
+from facet.mace.e3_layers import E3IrrepsArray, IrrepsModule
 from facet.layers import Context
-from jaxtyping import Float, Int, Array
+from jaxtyping import Int, Array
 import json
 import numpy as np
 import jax
