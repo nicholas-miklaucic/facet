@@ -75,7 +75,8 @@ class LearnedSpeciesWiseRescale(nn.Module):
             self.scale = sd_init(None)
 
     def __call__(self, energies, node_species):
-        return energies * self.scale[node_species] + self.shift[node_species]
+        indices = self.element_indices[node_species]
+        return energies * self.scale[indices] + self.shift[indices]
 
 
 class MACELayer(nn.Module):
@@ -284,3 +285,6 @@ class MaceModel(nn.Module):
         out_shift, out_scale = self.out_shift_scale
 
         return graph_out * out_scale + out_shift
+
+
+0

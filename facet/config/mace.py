@@ -131,8 +131,8 @@ class SevenNetConvConfig(MessageConfig):
     max_ell: int = 2
     radial_weight: MLPConfig = field(
         default_factory=lambda: MLPConfig(
-            inner_dims=[64, 64],
-            final_activation='shifted_softplus',
+            inner_dims=[],
+            final_activation='Identity',
             out_dim=0,
             use_bias=False,
         )
@@ -288,7 +288,7 @@ class IrrepsConfig:
     max_degree: int = 2
     # Decay for allocating dimensions to the different kinds of tensor. Dimension d+1 gets gamma
     # times the number of dimension d tensors.
-    gamma: float = 0.5
+    gamma: float = 1
 
     # Number of layers.
     num_layers: int = 2
@@ -320,12 +320,19 @@ class MACEConfig:
         default_factory=SimpleInteractionBlockConfig
     )
     readout: Union[LinearReadoutConfig] = field(default_factory=LinearReadoutConfig)
-    self_connection: Union[GateConfig, MLPSelfGateConfig, S2MLPMixerConfig] = field(
+    self_connection: Union[S2MLPMixerConfig, MLPSelfGateConfig, GateConfig] = field(
         default_factory=S2MLPMixerConfig
     )
-    head: MLPConfig = field(default_factory=MLPConfig)
+    head: MLPConfig = field(
+        default_factory=lambda: MLPConfig(
+            inner_dims=[],
+            final_activation='Identity',
+            out_dim=0,
+            use_bias=False,
+        )
+    )
 
-    residual: bool = False
+    residual: bool = True
     resid_init: str = 'zeros'
     hidden_irreps: Union[IrrepsConfig, tuple[str, ...]] = field(default_factory=IrrepsConfig)
     outs_per_node: int = 64

@@ -1,0 +1,54 @@
+batch_size = 32
+stack_size = 1
+num_epochs = 5
+precision = "f32"
+debug_mode = true
+do_profile = false
+display = "dashboard"
+
+[data]
+dataset_name = "mp2022"
+
+[model]
+residual = true
+resid_init = "ones"
+
+[train.loss]
+energy_weight = 1
+force_weight = 0
+stress_weight = 0
+
+[train.lr_schedule]
+kind = "polynomial"
+warmup_frac = 0.1
+start_lr = 0.01
+end_lr = 0.9
+power = 1.0
+
+[model.head]
+inner_dims = [32]
+activation = "swish"
+final_activation = "Identity"
+dropout = 0.0
+residual = false
+num_heads = 1
+use_bias = false
+normalization = "layer"
+
+[model.hidden_irreps]
+kind = "derived"
+dim = 128
+max_degree = 2
+gamma = 1
+num_layers = 1
+min_gcd = 2
+
+[model.self_connection.mlp]
+inner_dims = [32]
+activation = "swish"
+final_activation = "Identity"
+dropout = 0.0
+residual = false
+num_heads = 1
+use_bias = false
+normalization = "layer"

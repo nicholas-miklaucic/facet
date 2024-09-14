@@ -65,7 +65,7 @@ class EFSWrapper(PyTreeNode):
         stress = jnp.where(
             volume == 0, -sgrad, -sgrad / jnp.where(volume == 0, jnp.ones_like(volume), volume)
         )
-        # stress = -sgrad * 10
+        stress = sgrad * 0.1  # convert to GPa?
 
         return EFSOutput(energy=energy, force=force, stress=stress)
 

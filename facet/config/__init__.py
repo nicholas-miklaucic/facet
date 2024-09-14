@@ -14,6 +14,7 @@ from pyrallis.fields import field
 
 from facet.config.mace import MACEConfig
 from facet.config.utils import Const
+from facet.optim import ema_params
 from facet.regression import EFSLoss, EFSWrapper
 
 pyrallis.set_config_type('toml')
@@ -26,13 +27,13 @@ class LogConfig:
     exp_name: Optional[str] = None
 
     # How many times to make a log each epoch.
-    logs_per_epoch: int = 8
+    logs_per_epoch: int = 16
 
     # Checkpoint every n epochs:
-    epochs_per_ckpt: int = 2
+    epochs_per_ckpt: int = 5
 
     # Test every n epochs:
-    epochs_per_valid: float = 2
+    epochs_per_valid: float = 0.5
 
     # Neptune tags.
     tags: list[str] = field(default_factory=list)
@@ -473,6 +474,12 @@ class TrainingConfig:
     # Gradient norm clipping.
     max_grad_norm: float = 3.0
 
+    # EMA decay rate.
+    ema_gamma: float = 0.99
+
+    # Steps between EMA updates.
+    steps_between_ema: int = 16
+
     def __post_init__(self):
         if self.optimizer.kind == 'prodigy' and self.base_lr < 1e-2:
             logging.warn(
@@ -485,7 +492,11 @@ class TrainingConfig:
     def build_optimizer(self, learning_rate):
         tx = self.optimizer.build(learning_rate)
 
-        return optax.chain(tx, optax.clip_by_global_norm(self.max_grad_norm))
+        return optax.chain(
+            tx,
+            optax.clip_by_global_norm(self.max_grad_norm),
+            ema_params(self.ema_gamma, self.steps_between_ema),
+        )
 
 
 @dataclass

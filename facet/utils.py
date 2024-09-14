@@ -102,6 +102,19 @@ def item_if_arr(x: int | float | jax.Array) -> float:
         return x.item()
 
 
+def get_or_init(mod: nn.Module, name: str, constant: jax.Array, trainable: bool):
+    """If trainable, return a parameter initialized from the module with the given name that starts
+    as the constant. If not, return the constant."""
+    if trainable:
+        return constant
+    else:
+
+        def initializer(rng):
+            return constant
+
+        return mod.param(name, initializer)
+
+
 def load_pytree(file: PathLike):
     """Loads a MsgPack serialized PyTree."""
     with open(Path(file), 'rb') as infile:

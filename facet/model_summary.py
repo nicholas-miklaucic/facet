@@ -14,7 +14,7 @@ def model_summary(config: MainConfig, write_to_file: bool = False, print_summary
     cfg_dict = pyrallis.encode(config)  # type: ignore
     cfg_dict['batch_size'] = 32
     cfg_dict['stack_size'] = 1
-    cfg_dict['model']['resid_init'] = 'zeros'
+    cfg_dict['model']['resid_init'] = 'ones'
     config = pyrallis.decode(MainConfig, cfg_dict)  # type: ignore
     with StringIO() as data, redirect_stdout(data):
         rich.reconfigure(width=200, force_terminal=True, color_system='truecolor')

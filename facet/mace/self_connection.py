@@ -282,9 +282,6 @@ class S2SelfConnection(SelfConnectionBlock):
     """
     Combines inputs as functions on the sphere, applies a pointwise nonlinearity, and then
     transforms back. Uses a linear layer on either side to mix channels.
-
-    If separate is True, then the number of sphere-gridded functions is dependent on the maximum
-    number of vectors l > 0, with other scalars simply being concatenated.
     """
 
     act: S2Activation

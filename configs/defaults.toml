@@ -30,17 +30,20 @@ gpu_ids = []
 
 [log]
 log_dir = "logs"
-logs_per_epoch = 8
-epochs_per_ckpt = 2
-epochs_per_valid = 2
+logs_per_epoch = 16
+epochs_per_ckpt = 5
+epochs_per_valid = 0.5
 tags = []
+log_params = [ "edge_embedding/basis/mu", "edge_embedding/basis/sigma", "edge_embedding/basis/freq", "edge_embedding/rmax",]
 
 [train]
 base_lr = 1.0
 max_grad_norm = 3.0
+ema_gamma = 0.999
+steps_between_ema = 1
 
 [model]
-residual = false
+residual = true
 resid_init = "zeros"
 outs_per_node = 64
 block_reduction = "last"
@@ -87,6 +90,7 @@ kind = "s2-mlp-mixer"
 inner_dims = []
 activation = "swish"
 final_activation = "Identity"
+out_dim = 0
 dropout = 0.0
 residual = false
 num_heads = 1
@@ -97,7 +101,7 @@ normalization = "layer"
 kind = "derived"
 dim = 384
 max_degree = 2
-gamma = 0.5
+gamma = 1
 num_layers = 2
 min_gcd = 2
 
@@ -125,8 +129,8 @@ max_ell = 2
 
 [model.self_connection.s2_grid]
 activation = "silu"
-res_beta = 16
-res_alpha = 15
+res_beta = 18
+res_alpha = 17
 normalization = "integral"
 quadrature = "soft"
 use_fft = false
@@ -142,9 +146,9 @@ use_bias = false
 normalization = "layer"
 
 [model.interaction.message.radial_weight]
-inner_dims = [64, 64]
+inner_dims = []
 activation = "swish"
-final_activation = "shifted_softplus"
+final_activation = "Identity"
 out_dim = 0
 dropout = 0.0
 residual = false

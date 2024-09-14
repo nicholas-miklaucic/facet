@@ -82,7 +82,7 @@ def show_model(config: MainConfig, make_hlo_dot=False, do_profile=False, show_st
         )
     )
 
-    flax_summary(mod, rngs=rngs, cg=b1, **kwargs)
+    flax_summary(mod, rngs=rngs, cg=b1, console_kwargs={'width': 200}, **kwargs)
 
     val_and_grad = jax.jit(jax.value_and_grad(lambda x: jnp.mean(loss_fn(x)['loss'])))
     cost_analysis = val_and_grad.lower(params).cost_analysis()

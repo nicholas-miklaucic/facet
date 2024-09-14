@@ -84,6 +84,14 @@ class Checkpoint:
     curr_epoch: float
 
 
+def eval_state(state: TrainState) -> TrainState:
+    return state.replace(params=state.opt_state[-1].ema)  # type: ignore
+
+
+def update_metrics(state: TrainState, metric_updates) -> TrainState:
+    return state.replace(metrics=state.metrics.update(**metric_updates))
+
+
 class TrainingRun:
     def __init__(self, config: MainConfig):
         self.seed = random.randint(100, 1000)
@@ -161,8 +169,7 @@ class TrainingRun:
         losses['grad_norm'] = state.last_grad_norm
         metric_updates = dict(**losses)
 
-        state = state.replace(metrics=state.metrics.update(**metric_updates))
-        return state
+        return metric_updates
 
     @staticmethod
     @ft.partial(jax.jit, static_argnames=('config',))
@@ -276,13 +283,18 @@ class TrainingRun:
     def next_step(self):
         return self.step(self.curr_step + 1, next(self.dl))
 
-    def log_metric(self, metric_name: str, metric_value, split: Literal['train', 'valid', None]):
+    def log_metric(
+        self, metric_name: str, metric_value, split: Literal['train', 'valid', 'eval', None]
+    ):
         if split == 'train':
             self.metrics_history[f'tr_{metric_name}'].append(metric_value)
             self.run[f'train/{metric_name}'].append(value=metric_value, step=self.curr_epoch)
         elif split == 'valid':
             self.metrics_history[f'te_{metric_name}'].append(metric_value)
             self.run[f'valid/{metric_name}'].append(value=metric_value, step=self.curr_epoch)
+        elif split == 'eval':
+            self.metrics_history[f'ev_{metric_name}'].append(metric_value)
+            self.run[f'eval/{metric_name}'].append(value=metric_value, step=self.curr_epoch)
         elif split is None:
             self.metrics_history[f'{metric_name}'].append(metric_value)
             self.run[f'{metric_name}'].append(value=metric_value, step=self.curr_epoch)
@@ -291,7 +303,7 @@ class TrainingRun:
 
     @property
     def eval_state(self) -> TrainState:
-        return self.state
+        return eval_state(self.state)
 
     def step(self, step: int, batch: CrystalGraphs):
         self.curr_step = step
@@ -332,7 +344,8 @@ class TrainingRun:
 
         self.state, preds = self.train_step(state=self.state, **kwargs)  # type: ignore
         # jax.debug.visualize_array_sharding(preds[..., 0])
-        self.state = self.compute_metrics(preds=preds, state=self.eval_state, **kwargs)
+        metric_updates = self.compute_metrics(preds=preds, state=self.eval_state, **kwargs)
+        self.state = update_metrics(self.state, metric_updates)
 
         if self.should_log or self.should_ckpt or self.should_validate:
             for metric, value in self.state.metrics.items():  # compute metrics
@@ -389,31 +402,46 @@ class TrainingRun:
         # debug_structure(self.state)
         # print(self.metrics_history)
 
-        if self.should_validate:
-            # Compute metrics on the test set after each training epoch
-            self.test_state = self.eval_state.replace(metrics=Metrics())
+        def compute_test_metrics(test_state):
             for _i, test_batch in zip(range(self.steps_in_test_epoch), self.test_dl):
                 test_preds = TrainingRun.test_preds(
                     self.config.train.loss,
-                    self.test_state,
-                    self.test_state.params,
+                    test_state,
+                    test_state.params,
                     test_batch,
                     self.rng,
                 )
 
-                self.test_state = self.compute_metrics(
+                metric_updates = self.compute_metrics(
                     config=self.config.train.loss,
-                    state=self.test_state,
+                    state=test_state,
                     batch=test_batch,
                     preds=test_preds,
                 )
 
+                test_state = update_metrics(test_state, metric_updates)
+
+            return test_state
+
+        if self.should_validate:
+            self.test_state = self.eval_state.replace(metrics=Metrics())
+            self.test_state = compute_test_metrics(self.test_state)
+
             for metric, value in self.test_state.metrics.items():
                 if metric == 'grad_norm':
                     continue
-                self.log_metric(metric, value, 'valid')
+                self.log_metric(metric, value, 'eval')
                 if f'{metric}' == 'loss':
                     self.test_loss = value
+
+            # compute values with current training: useful to debug difference between
+            # e.g., EMA and normal training
+            test_state_eval = self.state.replace(metrics=Metrics())
+            test_state_eval = compute_test_metrics(test_state_eval)
+            for metric, value in test_state_eval.metrics.items():
+                if metric == 'grad_norm':
+                    continue
+                self.log_metric(metric, value, 'valid')
 
         if self.should_ckpt:
             # print(self.test_loss)
@@ -496,7 +524,7 @@ class TrainingRun:
 
     def finish(self):
         if self.config.debug_mode:
-            return '/dev/null'
+            return Path('/dev/null')
 
         now = datetime.now()
         if self.config.log.exp_name is None:

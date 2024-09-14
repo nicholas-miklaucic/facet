@@ -6,6 +6,7 @@ from flax import linen as nn
 from jaxtyping import Float, Array
 
 from facet.layers import Context, E3IrrepsArray, Identity
+from facet.utils import get_or_init
 
 
 class RadialBasis(nn.Module):
@@ -34,12 +35,9 @@ class RadialEmbeddingBlock(nn.Module):
     radius_transform: nn.Module
 
     def setup(self):
-        if self.r_max_trainable:
-            self.param_rmax = self.param(
-                'rmax', nn.initializers.constant(self.r_max), (1,), jnp.float32
-            )
-        else:
-            self.param_rmax = self.r_max
+        self.param_rmax = get_or_init(
+            self, 'rmax', jnp.array([self.r_max], dtype=jnp.float32), self.r_max_trainable
+        )
 
     def __call__(self, edge_lengths: Float[Array, '*batch'], ctx: Context) -> E3IrrepsArray:
         """*batch -> *batch num_basis"""
@@ -60,24 +58,19 @@ class GaussBasis(RadialBasis):
     mu_trainable: bool
     sd_trainable: bool
     mu_max: float
-    sd: float = 1.0
+    sd: float
 
     def setup(self):
-        def loc_init(rng):
-            return jnp.linspace(0, self.mu_max, self.num_basis, dtype=jnp.float32)
+        self.mu = get_or_init(
+            self,
+            'mu',
+            jnp.linspace(0, self.mu_max, self.num_basis, dtype=jnp.float32),
+            self.mu_trainable,
+        )
 
-        if self.mu_trainable:
-            self.mu = self.param('mu', loc_init)
-        else:
-            self.mu = loc_init(None)
-
-        def sd_init(rng):
-            return jnp.array([self.sd], dtype=jnp.float32)
-
-        if self.sd_trainable:
-            self.sigma = self.param('sigma', sd_init)
-        else:
-            self.sigma = sd_init(None)
+        self.sigma = get_or_init(
+            self, 'sigma', jnp.array([self.sd], dtype=jnp.float32), self.sd_trainable
+        )
 
     def __call__(
         self, d: Float[Array, ' *batch'], r_max, ctx: Context
@@ -93,13 +86,9 @@ class BesselBasis(RadialBasis):
     freq_trainable: bool = True
 
     def setup(self):
-        def freq_init(rng):
-            return jnp.arange(self.num_basis, dtype=jnp.float32) + 1
-
-        if self.freq_trainable:
-            self.freq = self.param('freq', freq_init)
-        else:
-            self.freq = freq_init(None)
+        self.freq = get_or_init(
+            self, 'freq', jnp.arange(self.num_basis, dtype=jnp.float32) + 1, self.freq_trainable
+        )
 
     def __call__(self, x, r_max, ctx: Context):
         dist = x[..., None] / r_max
@@ -158,35 +147,3 @@ class ExpCutoff(Envelope):
         envelope = 1 - jnp.where(t < 0.5, exp_func(2 * t) / 2, 1 - exp_func(2 - 2 * t) / 2)
 
         return envelope
-
-
-if __name__ == '__main__':
-    import jax
-    import jax.random as jr
-    from facet.utils import debug_stat, debug_structure
-
-    rng = jr.key(123)
-    radii = jr.truncated_normal(rng, lower=-3.4, upper=5, shape=(32, 16), dtype=jnp.bfloat16) + 4
-    data = {}
-    kwargs = dict(num_basis=10, r_max=7)
-    cutoff = ExpCutoff(r_max=kwargs['r_max'], c=0.1, cutoff_start=0.8)
-
-    mods = [cutoff]
-    for basis in (GaussBasis(**kwargs), BesselBasis(**kwargs)):
-        mods.append(RadialEmbeddingBlock(basis=basis, envelope=cutoff))
-
-    for mod in mods:
-        name = mod.basis.__class__.__name__ if hasattr(mod, 'basis') else 'raw'
-
-        def embed(radii):
-            out, params = mod.init_with_output(rng, radii, ctx=Context(training=True))
-            if hasattr(out, 'array'):
-                return out.array
-            else:
-                return out
-
-        data[name] = embed(radii)
-        data[name + '_grad'] = jax.grad(lambda x: jnp.sum(embed(x)))(radii)
-
-    # debug_structure(**data)
-    debug_stat(**data)
