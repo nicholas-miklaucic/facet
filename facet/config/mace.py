@@ -5,8 +5,10 @@ from typing import Union
 import jax.numpy as jnp
 import numpy as np
 from flax.struct import dataclass
+import flax.linen as nn
 from pyrallis.fields import field
 
+from facet.data.metadata import DatasetMetadata
 from facet.e3.activations import S2Activation
 from facet.mace.e3_layers import LinearAdapter
 from facet.mace.edge_embedding import (
@@ -18,8 +20,8 @@ from facet.mace.edge_embedding import (
     Envelope,
 )
 from facet.mace.mace import (
-    LearnedSpeciesWiseRescale,
     MaceModel,
+    SpeciesWiseRescale,
 )
 from facet.mace.message_passing import (
     NodeFeatureMLPWeightedConv,
@@ -191,7 +193,7 @@ class SimpleInteractionBlockConfig(InteractionConfig):
 class NodeEmbeddingConfig:
     embed_dim: int = 64
 
-    def build(self, num_species: int, elem_indices: Sequence[int]) -> LinearNodeEmbedding:
+    def build(self, metadata: DatasetMetadata) -> LinearNodeEmbedding:
         raise NotImplementedError
 
 
@@ -199,10 +201,8 @@ class NodeEmbeddingConfig:
 class LinearNodeEmbeddingConfig(NodeEmbeddingConfig):
     kind: Const('linear') = 'linear'
 
-    def build(self, num_species: int, elem_indices: Sequence[int]) -> LinearNodeEmbedding:
-        return LinearNodeEmbedding(
-            f'{self.embed_dim}x0e', num_species=num_species, element_indices=jnp.array(elem_indices)
-        )
+    def build(self, metadata: DatasetMetadata) -> LinearNodeEmbedding:
+        return LinearNodeEmbedding(f'{self.embed_dim}x0e', num_species=len(metadata.atomic_numbers))
 
 
 @dataclass
@@ -280,6 +280,30 @@ class MLPSelfGateConfig(SelfConnectionConfig):
 
 
 @dataclass
+class RescaleConfig:
+    def build(self, metadata: DatasetMetadata) -> nn.Module:
+        raise NotImplementedError
+
+
+@dataclass
+class SpeciesWiseRescaleConfig(RescaleConfig):
+    kind: Const('species-wise') = 'species-wise'
+    scale_trainable: bool = False
+    shift_trainable: bool = False
+    global_scale_trainable: bool = False
+    global_shift_trainable: bool = False
+
+    def build(self, metadata: DatasetMetadata) -> SpeciesWiseRescale:
+        return SpeciesWiseRescale(
+            metadata,
+            scale_trainable=self.scale_trainable,
+            shift_trainable=self.shift_trainable,
+            global_scale_trainable=self.global_scale_trainable,
+            global_shift_trainable=self.global_shift_trainable,
+        )
+
+
+@dataclass
 class IrrepsConfig:
     kind: Const('derived') = 'derived'
     # Total dimension. May be off by one or two due to rounding.
@@ -323,6 +347,7 @@ class MACEConfig:
     self_connection: Union[S2MLPMixerConfig, MLPSelfGateConfig, GateConfig] = field(
         default_factory=S2MLPMixerConfig
     )
+    rescale: Union[SpeciesWiseRescaleConfig] = field(default_factory=SpeciesWiseRescaleConfig)
     head: MLPConfig = field(
         default_factory=lambda: MLPConfig(
             inner_dims=[],
@@ -341,22 +366,21 @@ class MACEConfig:
 
     def build(
         self,
-        num_species: int,
-        elem_indices: Sequence[int],
+        metadata: DatasetMetadata,
         precision: str,
-        out_shift_scale: tuple[float, float],
     ) -> MaceModel:
         if isinstance(self.hidden_irreps, IrrepsConfig):
             hidden_irreps = self.hidden_irreps.build()
         else:
             hidden_irreps = self.hidden_irreps
+
         return MaceModel(
             hidden_irreps=hidden_irreps,
-            node_embedding=self.node_embed.build(num_species, elem_indices),
+            node_embedding=self.node_embed.build(metadata),
             edge_embedding=self.edge_embed.build(),
             interaction=self.interaction.build(),
             readout=self.readout.build(),
-            rescale=LearnedSpeciesWiseRescale(num_species, jnp.array(elem_indices), True, True),
+            rescale=self.rescale.build(metadata),
             head_templ=self.head.build(),
             self_connection=self.self_connection.build(),
             outs_per_node=self.outs_per_node,
@@ -365,5 +389,4 @@ class MACEConfig:
             residual=self.residual,
             precision=precision,  # type: ignore
             resid_init=Layer(self.resid_init).build(),
-            out_shift_scale=out_shift_scale,
         )

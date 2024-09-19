@@ -1,7 +1,7 @@
 """Processes the MPTrj dataset."""
 
 from tqdm import tqdm
-from facet.databatch import CrystalGraphs, CrystalData, EdgeData, NodeData, MPTrjTarget
+from facet.data.databatch import CrystalGraphs, CrystalData, EdgeData, NodeData, TargetInfo
 from pymatgen.core import Structure
 import numpy as np
 import jax.numpy as jnp
@@ -67,7 +67,7 @@ def create_graph(row, data_id, graph_data):
         angles_rad=jnp.deg2rad(jnp.array([struct.lattice.angles])),
         lat=jnp.array([struct.lattice.matrix])
     )
-    target = MPTrjTarget(
+    target = TargetInfo(
         e_form=jnp.array([row['energy_per_atom']]),    
         force=jnp.array(row['force']),
         stress=jnp.array([row['stress']]),

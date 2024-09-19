@@ -1,6 +1,6 @@
 """Generates the necessary metadata for a dataset."""
 
-from facet.dataset import dataloader
+from facet.data.dataset import dataloader
 from pyrallis import wrap
 from facet.config import MainConfig
 from facet.layers import edge_vecs

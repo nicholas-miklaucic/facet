@@ -25,7 +25,6 @@ class LinearNodeEmbedding(NodeEmbedding):
     """Standard embedding layer."""
 
     num_species: int
-    element_indices: Int[Array, ' max_species']
 
     def setup(self):
         if self.ir_out.lmax > 0:
@@ -34,7 +33,7 @@ class LinearNodeEmbedding(NodeEmbedding):
         self.embed = nn.Embed(self.num_species, self.out_dim)
 
     def __call__(self, node_species: Int[Array, ' nodes'], ctx: Context) -> E3IrrepsArray:
-        return E3IrrepsArray(self.ir_out, self.embed(self.element_indices[node_species]))
+        return E3IrrepsArray(self.ir_out, self.embed(node_species))
 
 
 class SevenNetEmbedding(NodeEmbedding):

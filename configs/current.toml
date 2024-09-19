@@ -1,0 +1,117 @@
+batch_size = 256
+stack_size = 1
+num_epochs = 25
+precision = "f32"
+debug_mode = false
+do_profile = false
+display = "progress"
+
+[data]
+dataset_name = "mp2022"
+raw_data_folder = "data"
+data_folder = "precomputed"
+shuffle_seed = 29205
+train_split = 30
+test_split = 3
+valid_split = 3
+batch_n_nodes = 1024
+k = 16
+batch_n_graphs = 32
+
+[cli]
+verbosity = "info"
+show_progress = true
+
+[log]
+log_dir = "logs"
+logs_per_epoch = 16
+epochs_per_ckpt = 3
+epochs_per_valid = 0.5
+tags = []
+
+[model]
+resid_init = "zeros"
+
+[train.lr_schedule]
+kind = "polynomial"
+warmup_frac = 0.05
+start_lr = 0.01
+end_lr = 0.99
+power = 1.0
+
+[train.loss]
+energy_weight = 1
+force_weight = 0
+stress_weight = 0
+
+[model.head]
+inner_dims = []
+activation = "silu"
+final_activation = "Identity"
+dropout = 0.2
+residual = false
+num_heads = 1
+use_bias = false
+normalization = "layer"
+
+[model.hidden_irreps]
+kind = "derived"
+dim = 512
+max_degree = 2
+gamma = 0.5
+num_layers = 2
+min_gcd = 2
+
+[train.loss.reg_loss]
+loss_delta = 0.015625
+use_rmse = false
+
+[model.edge_embed]
+r_max = 7
+r_max_trainable = true
+
+[model.edge_embed.radial_basis]
+num_basis = 16
+kind = "gauss"
+mu_max = 7
+sd = 0.25
+mu_trainable = true
+sd_trainable = true
+
+[model.edge_embed.envelope]
+kind = "exp"
+cutoff_start = 0.8
+c = 0.1
+
+[model.interaction.message]
+kind = "sevennet-conv"
+avg_num_neighbors = 15
+max_ell = 4
+
+[model.self_connection.s2_grid]
+activation = "silu"
+res_beta = 18
+res_alpha = 17
+normalization = "integral"
+quadrature = "soft"
+use_fft = false
+
+[model.self_connection.mlp]
+inner_dims = [32]
+activation = "silu"
+final_activation = "Identity"
+dropout = 0.2
+residual = false
+num_heads = 1
+use_bias = false
+normalization = "layer"
+
+[model.interaction.message.radial_weight]
+inner_dims = []
+activation = "silu"
+final_activation = "Identity"
+dropout = 0.0
+residual = false
+num_heads = 1
+use_bias = false
+normalization = "layer"

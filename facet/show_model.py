@@ -9,7 +9,7 @@ from jax.lib import xla_client
 from flax import linen as nn
 
 from facet.config import MainConfig
-from facet.dataset import dataloader
+from facet.data.dataset import dataloader
 from facet.layers import Context
 from facet.regression import EFSLoss, EFSWrapper
 from facet.utils import debug_stat, debug_structure, flax_summary, intercept_stat
@@ -29,7 +29,7 @@ def show_model(config: MainConfig, make_hlo_dot=False, do_profile=False, show_st
 
     batch = jax.device_put(batch, config.device.devices()[0])
 
-    # debug_structure(batch=batch)
+    # debug_stat(batch=batch)
 
     mod = config.build_regressor()
     rngs = {}

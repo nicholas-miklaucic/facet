@@ -10,8 +10,8 @@ from jax.lib import xla_client
 from flax import linen as nn
 
 from facet.config import MainConfig
-from facet.databatch import CrystalGraphs
-from facet.dataset import dataloader
+from facet.data.databatch import CrystalGraphs
+from facet.data.dataset import dataloader
 from facet.layers import Context
 from facet.mace.e3_layers import IrrepsModule
 from facet.regression import EFSLoss, EFSWrapper

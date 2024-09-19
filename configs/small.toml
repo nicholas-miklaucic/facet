@@ -15,9 +15,6 @@ train_split = 30
 test_split = 3
 valid_split = 3
 batches_per_group = 0
-batch_n_nodes = 1024
-k = 16
-batch_n_graphs = 32
 
 [cli]
 verbosity = "info"
@@ -54,6 +51,13 @@ residual = false
 num_heads = 1
 use_bias = false
 normalization = "layer"
+
+[model.rescale]
+kind = "species-wise"
+scale_trainable = false
+shift_trainable = false
+global_scale_trainable = false
+global_shift_trainable = false
 
 [model.hidden_irreps]
 kind = "derived"

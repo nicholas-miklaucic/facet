@@ -37,6 +37,7 @@ def edge_vecs(cg):
     """CG -> nodes k xyz"""
     # print(cg)
     send_pos = cg.nodes.cart[:, None, :]  # nodes 1 3
+    # print(cg.graph_data.lat[cg.nodes.graph_i].shape, cg.edges.to_jimage.shape)
     offsets = EinsOp('nodes abc xyz, nodes k abc -> nodes k xyz')(
         cg.graph_data.lat[cg.nodes.graph_i], cg.edges.to_jimage
     )

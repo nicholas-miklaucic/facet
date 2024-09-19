@@ -7,7 +7,7 @@ do_profile = false
 display = "dashboard"
 
 [data]
-dataset_name = "mptrj"
+dataset_name = "mp2022"
 raw_data_folder = "data"
 data_folder = "precomputed"
 shuffle_seed = 1618
@@ -15,9 +15,6 @@ train_split = 30
 test_split = 3
 valid_split = 3
 batches_per_group = 0
-batch_n_nodes = 1024
-k = 16
-batch_n_graphs = 32
 
 [cli]
 verbosity = "info"
@@ -34,13 +31,18 @@ logs_per_epoch = 16
 epochs_per_ckpt = 5
 epochs_per_valid = 0.5
 tags = []
-log_params = [ "edge_embedding/basis/mu", "edge_embedding/basis/sigma", "edge_embedding/basis/freq", "edge_embedding/rmax",]
+log_params = [
+    "edge_embedding/basis/mu",
+    "edge_embedding/basis/sigma",
+    "edge_embedding/basis/freq",
+    "edge_embedding/rmax",
+]
 
 [train]
 base_lr = 1.0
 max_grad_norm = 3.0
-ema_gamma = 0.999
-steps_between_ema = 1
+ema_gamma = 0.99
+steps_between_ema = 16
 
 [model]
 residual = true
@@ -85,6 +87,11 @@ kind = "linear"
 
 [model.self_connection]
 kind = "s2-mlp-mixer"
+
+[model.rescale]
+kind = "species-wise"
+scale_trainable = false
+shift_trainable = false
 
 [model.head]
 inner_dims = []

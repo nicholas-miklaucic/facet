@@ -25,7 +25,7 @@ from flax.training import train_state
 
 from facet.checkpointing import best_ckpt
 from facet.config import LossConfig, MainConfig
-from facet.dataset import CrystalGraphs, dataloader
+from facet.data.dataset import CrystalGraphs, dataloader
 from facet.layers import Context
 from facet.model_summary import model_summary
 from facet.utils import debug_structure, get_nested_path, item_if_arr
@@ -361,6 +361,12 @@ class TrainingRun:
                         test_value = 0
                     self.log_metric(metric, test_value, 'valid')
 
+                    if f'ev_{metric}' in self.metrics_history:
+                        test_value = self.metrics_history[f'ev_{metric}'][-1]
+                    else:
+                        test_value = 0
+                    self.log_metric(metric, test_value, 'eval')
+
             self.state = self.state.replace(
                 metrics=Metrics()
             )  # reset train_metrics for next training epoch
@@ -555,30 +561,3 @@ class TrainingRun:
         self.run.stop()
 
         return folder
-
-
-# if __name__ == '__main__':
-#     import pyrallis
-
-#     # avoid neptune logging on startup
-#     with open('configs/test.toml', 'r') as f:
-#         cfg = pyrallis.cfgparsing.load(MainConfig, f)
-#         cfg = pyrallis.encode(cfg)
-#         cfg['debug_mode'] = True
-#         cfg = pyrallis.decode(MainConfig, cfg)
-
-#     run = TrainingRun(cfg)
-
-#     cfg = pyrallis.encode(cfg)
-#     cfg['debug_mode'] = False
-#     cfg = pyrallis.decode(MainConfig, cfg)
-#     run.config = cfg
-
-#     print(run.steps_in_epoch)
-
-#     print('i', 'ckpt', 'val', 'log', sep='\t')
-#     for i in range(run.steps_in_epoch * cfg.log.epochs_per_ckpt + 2):
-#         run.curr_step = i
-#         flags = (run.should_ckpt, run.should_validate, run.should_log)
-#         if any(flags):
-#             print(i, *flags, sep='\t')

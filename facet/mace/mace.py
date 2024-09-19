@@ -3,6 +3,8 @@ MACE network code. Adapted from https://github.com/ACEsuit/mace-jax.
 """
 
 from collections.abc import Sequence
+from os import PathLike
+from pathlib import Path
 from typing import Callable, Literal
 from flax import linen as nn
 import e3nn_jax as e3nn
@@ -12,13 +14,14 @@ from jaxtyping import Float, Array, Int
 import json
 from eins import EinsOp
 
-from facet.databatch import CrystalGraphs
+from facet.data.databatch import CrystalGraphs
+from facet.data.metadata import DatasetMetadata
 from facet.mace.e3_layers import (
     E3LayerNorm,
     IrrepsModule,
     ResidualAdapter,
 )
-from facet.layers import SegmentReduction
+from facet.layers import SegmentReduction, SegmentReductionKind
 from facet.layers import Context, LazyInMLP, E3Irreps, E3IrrepsArray, edge_vecs
 from facet.mace.edge_embedding import RadialEmbeddingBlock
 from facet.mace.message_passing import SimpleInteraction
@@ -26,6 +29,7 @@ from facet.mace.node_embedding import NodeEmbedding
 from facet.mace.self_connection import (
     SelfConnectionBlock,
 )
+from facet.utils import debug_structure, get_or_init, load_pytree
 
 
 def safe_norm(x: jnp.ndarray, axis: int | None = None, keepdims=False) -> jnp.ndarray:
@@ -35,48 +39,51 @@ def safe_norm(x: jnp.ndarray, axis: int | None = None, keepdims=False) -> jnp.nd
 
 
 class SpeciesWiseRescale(nn.Module):
-    def setup(self):
-        with open('data/sevennet_stats.json', 'r') as stats_file:
-            stats = json.load(stats_file)
-
-        with jax.ensure_compile_time_eval():
-            self.values = jnp.zeros((max(stats['atomic_numbers']) + 1,), dtype=jnp.float32)
-            self.values = self.values.at[jnp.array(stats['atomic_numbers'], dtype=jnp.uint32)].set(
-                jnp.array(stats['atomic_energies'])
-            )
-
-    def __call__(self, energies, node_species):
-        return energies + self.values[node_species]
-
-
-class LearnedSpeciesWiseRescale(nn.Module):
-    """Standard embedding layer."""
-
-    num_species: int
-    element_indices: Int[Array, ' max_species']
-    shift_trainable: bool
+    metadata: DatasetMetadata
     scale_trainable: bool
+    shift_trainable: bool
+    global_scale_trainable: bool
+    global_shift_trainable: bool
 
     def setup(self):
-        def loc_init(rng):
-            return jnp.zeros(self.num_species, dtype=jnp.float32)
+        self.scale = get_or_init(
+            self, 'scale', self.metadata.atomwise_scale_energy, self.scale_trainable
+        )
+        self.shift = get_or_init(
+            self, 'shift', self.metadata.atomwise_shift_energy, self.shift_trainable
+        )
+        self.global_scale = get_or_init(
+            self,
+            'global_scale',
+            jnp.array([self.metadata.scale_energy]),
+            self.global_scale_trainable,
+        )
+        self.global_shift = get_or_init(
+            self,
+            'global_shift',
+            jnp.array([self.metadata.shift_energy]),
+            self.global_shift_trainable,
+        )
+        self.reduction = SegmentReduction('sum')
 
-        if self.shift_trainable:
-            self.shift = self.param('shift', loc_init)
-        else:
-            self.shift = loc_init(None)
+    def __call__(self, cg: CrystalGraphs, energies: Float[Array, ' nodes'], ctx: Context):
+        # debug_structure(
+        #     energies=energies, species=node_species, scale=self.metadata.atomwise_scale_energy
+        # )
+        # print(jnp.unique(cg.nodes.species, return_counts=True))
+        scaled_node_energies = energies * jnp.take(self.scale, cg.nodes.species) + jnp.take(
+            self.shift, cg.nodes.species
+        )
+        scaled_graph_energies = self.reduction(
+            scaled_node_energies, cg.nodes.graph_i, cg.n_total_graphs, ctx=ctx
+        )
 
-        def sd_init(rng):
-            return jnp.ones(self.num_species, dtype=jnp.float32)
-
-        if self.scale_trainable:
-            self.scale = self.param('scale', sd_init)
-        else:
-            self.scale = sd_init(None)
-
-    def __call__(self, energies, node_species):
-        indices = self.element_indices[node_species]
-        return energies * self.scale[indices] + self.shift[indices]
+        num_atoms = jax.ops.segment_sum(
+            jnp.ones_like(scaled_node_energies), cg.nodes.graph_i, cg.n_total_graphs
+        )
+        scaled_outs = scaled_graph_energies * jnp.exp(self.global_scale) + self.global_shift
+        scaled_outs = scaled_outs / (num_atoms + 1e-6)
+        return scaled_outs[..., None]
 
 
 class MACELayer(nn.Module):
@@ -224,7 +231,6 @@ class MaceModel(nn.Module):
     residual: bool
     resid_init: Callable
     rescale: nn.Module
-    out_shift_scale: tuple[float, float]
 
     precision: Literal['f32', 'bf16']
     outs_per_node: int
@@ -277,14 +283,4 @@ class MaceModel(nn.Module):
         out = self.norm(out)
 
         mlp_out = self.head(out, ctx=ctx)[..., 0]
-        scaled_out = self.rescale(mlp_out, cg.nodes.species)
-        graph_out = self.node2graph_reduction(
-            scaled_out, cg.nodes.graph_i, cg.n_total_graphs, ctx=ctx
-        )[..., None]
-
-        out_shift, out_scale = self.out_shift_scale
-
-        return graph_out * out_scale + out_shift
-
-
-0
+        return self.rescale(cg, mlp_out, ctx=ctx)

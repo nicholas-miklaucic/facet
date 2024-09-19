@@ -6,6 +6,7 @@ from typing import Any, Mapping, Optional, Union
 
 import jax
 import jax.numpy as jnp
+from jaxtyping import ArrayLike
 import numpy as np
 import optax
 import pyrallis
@@ -14,8 +15,10 @@ from pyrallis.fields import field
 
 from facet.config.mace import MACEConfig
 from facet.config.utils import Const
+from facet.data.metadata import DatasetMetadata
 from facet.optim import ema_params
 from facet.regression import EFSLoss, EFSWrapper
+from facet.utils import load_pytree
 
 pyrallis.set_config_type('toml')
 
@@ -52,7 +55,7 @@ class LogConfig:
 @dataclass
 class DataConfig:
     # The name of the dataset to use.
-    dataset_name: str = 'mptrj'
+    dataset_name: str = 'mp2022'
 
     # Folder of raw data files.
     raw_data_folder: Path = Path('data/')
@@ -74,31 +77,19 @@ class DataConfig:
     batches_per_group: int = 0
 
     # Number of nodes in each batch to pad to.
-    batch_n_nodes: int = 1024
+    batch_n_nodes: Optional[int] = None
     # Number of neighbors per node.
-    k: int = 16
+    k: Optional[int] = None
     # Number of graphs in each batch to pad to.
-    batch_n_graphs: int = 32
+    batch_n_graphs: Optional[int] = None
 
     @property
     def graph_shape(self) -> tuple[int, int, int]:
         return (self.batch_n_nodes, self.k, self.batch_n_graphs)
 
     @property
-    def metadata(self) -> Mapping[str, Any] | None:
-        import json
-
-        path = self.dataset_folder / 'metadata.json'
-
-        if not path.exists():
-            return None
-
-        try:
-            with open(path, 'r') as f:
-                metadata = json.load(f)
-                return metadata
-        except JSONDecodeError:
-            return None
+    def metadata(self) -> DatasetMetadata:
+        return DatasetMetadata(**load_pytree(self.dataset_folder / 'metadata.mpk'))
 
     def __post_init__(self):
         pass
@@ -116,21 +107,11 @@ class DataConfig:
     @property
     def num_species(self) -> int:
         """Number of unique elements."""
-        return len(self.metadata['elements'])
+        return self.metadata.atomic_numbers.size
 
-    def avg_num_neighbors(self, cutoff: float):
+    def avg_num_neighbors(self, cutoff: ArrayLike):
         """Estimates average number of neighbors, given a certain cutoff."""
-        dists = self.metadata['distances']
-        n_nodes = self.metadata['n_nodes']
-        return sum([c for b, c in zip(dists['bins'], dists['counts']) if b < cutoff]) / n_nodes
-
-    def avg_dist(self, cutoff: float):
-        """Estimates average distance, given a certain cutoff."""
-        dists = self.metadata['distances']
-
-        bins = np.array(dists['bins'])
-        counts = np.array(dists['counts'])
-        return np.average(bins[bins < cutoff], weights=counts[bins < cutoff])
+        return self.metadata.avg_num_neighbors(cutoff)
 
 
 class LoggingLevel(Enum):
@@ -536,11 +517,11 @@ class MainConfig:
     def __post_init__(self):
         if (
             self.data.metadata is not None
-            and self.batch_size % self.data.metadata['batch_size'] != 0
+            and self.batch_size % self.data.metadata.batch_num_graphs != 0
         ):
             raise ValueError(
                 'Training batch size should be multiple of data batch size: {} does not divide {}'.format(
-                    self.batch_size, self.data.metadata['batch_size']
+                    self.batch_size, self.data.metadata.batch_num_graphs
                 )
             )
 
@@ -562,15 +543,10 @@ class MainConfig:
             # if None, we're trying to load data so that we can compute the metadata. 1 is fine.
             return 1
         else:
-            return self.batch_size // self.data.metadata['batch_size']
+            return self.batch_size // self.data.metadata.batch_num_graphs
 
     def build_regressor(self):
-        return self.model.build(
-            self.data.num_species,
-            self.data.metadata['element_indices'],
-            self.precision,
-            (self.data.metadata['e_form']['mean'], self.data.metadata['e_form']['std']),
-        )
+        return self.model.build(self.data.metadata, self.precision)
 
     def as_dict(self) -> dict:
         """Serializes the relevant values into a dictionary suitable for e.g., Neptune logging."""

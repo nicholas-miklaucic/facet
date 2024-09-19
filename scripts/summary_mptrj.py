@@ -2,8 +2,8 @@
 
 
 from collections import Counter
-from facet.databatch import CrystalGraphs
-from facet.dataset import dataloader
+from facet.data.databatch import CrystalGraphs
+from facet.data.dataset import dataloader
 from pyrallis import wrap
 from facet.config import MainConfig
 from facet.layers import edge_vecs
