@@ -7,10 +7,11 @@ import jax.numpy as jnp
 import pyrallis
 from jax.lib import xla_client
 from flax import linen as nn
+from flax.serialization import to_state_dict
 
 from facet.config import MainConfig
-from facet.data.dataset import dataloader
-from facet.layers import Context
+from facet.data.dataset import dataloader, load_file, stack_trees
+from facet.layers import Context, edge_vecs
 from facet.regression import EFSLoss, EFSWrapper
 from facet.utils import debug_stat, debug_structure, flax_summary, intercept_stat
 
@@ -27,6 +28,8 @@ def show_model(config: MainConfig, make_hlo_dot=False, do_profile=False, show_st
     for i, b in zip(range(2), dl):
         batch = b
 
+    # batch = stack_trees([load_file(config, i, 0) for i in range(3)])
+
     batch = jax.device_put(batch, config.device.devices()[0])
 
     # debug_stat(batch=batch)
@@ -36,12 +39,13 @@ def show_model(config: MainConfig, make_hlo_dot=False, do_profile=False, show_st
 
     rngs['params'] = jax.random.key(0)
     rngs['dropout'] = jax.random.key(1)
-    b1 = jax.tree_map(lambda x: x[0], batch)
+    b1 = jax.tree.map(lambda x: x[0], batch)
+
     # for k, v in rngs.items():
     #     rngs[k] = jax.device_put(v, )
 
     params = mod.init(rngs, b1, **kwargs)
-    batch = jax.tree_map(lambda x: x[:1], batch)
+    batch = jax.tree.map(lambda x: x[:1], batch)
     # params = jax.device_put_replicated(params, config.device.devices())
 
     base_apply_fn = jax.vmap(
@@ -53,7 +57,7 @@ def show_model(config: MainConfig, make_hlo_dot=False, do_profile=False, show_st
     def loss_fn(params, preds=None):
         if preds is None:
             preds = apply_fn(params, batch)
-        return jax.tree_map(jnp.mean, jax.vmap(config.train.loss.efs_loss)(batch, preds))
+        return jax.tree.map(jnp.mean, jax.vmap(config.train.loss.efs_loss)(batch, preds))
 
     with jax.debug_nans():
         out = apply_fn(params, batch)
@@ -61,8 +65,9 @@ def show_model(config: MainConfig, make_hlo_dot=False, do_profile=False, show_st
 
     # kwargs['cg'] = b1
     # print(params['params']['edge_proj']['kernel'].devices())
-    debug_structure(module=mod, out=out, loss=loss)
-    debug_stat(input=batch, out=out, loss=loss)
+    # TODO debugging module breaks?
+    debug_structure(out=out, loss=loss)
+    debug_stat(input=batch, out=out, loss=loss, vecs=edge_vecs(b1))
     rngs.pop('params')
 
     rot_batch, rots = jax.vmap(lambda x: x.rotate(123))(batch)

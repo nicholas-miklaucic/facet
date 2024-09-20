@@ -29,7 +29,7 @@ from facet.mace.node_embedding import NodeEmbedding
 from facet.mace.self_connection import (
     SelfConnectionBlock,
 )
-from facet.utils import debug_structure, get_or_init, load_pytree
+from facet.utils import debug_stat, debug_structure, get_or_init, load_pytree
 
 
 def safe_norm(x: jnp.ndarray, axis: int | None = None, keepdims=False) -> jnp.ndarray:
@@ -47,10 +47,10 @@ class SpeciesWiseRescale(nn.Module):
 
     def setup(self):
         self.scale = get_or_init(
-            self, 'scale', self.metadata.atomwise_scale_energy, self.scale_trainable
+            self, 'scale', jnp.array(self.metadata.atomwise_scale_energy), self.scale_trainable
         )
         self.shift = get_or_init(
-            self, 'shift', self.metadata.atomwise_shift_energy, self.shift_trainable
+            self, 'shift', jnp.array(self.metadata.atomwise_shift_energy), self.shift_trainable
         )
         self.global_scale = get_or_init(
             self,
@@ -64,25 +64,32 @@ class SpeciesWiseRescale(nn.Module):
             jnp.array([self.metadata.shift_energy]),
             self.global_shift_trainable,
         )
-        self.reduction = SegmentReduction('sum')
+        self.reduction = SegmentReduction('mean')
 
     def __call__(self, cg: CrystalGraphs, energies: Float[Array, ' nodes'], ctx: Context):
         # debug_structure(
         #     energies=energies, species=node_species, scale=self.metadata.atomwise_scale_energy
         # )
         # print(jnp.unique(cg.nodes.species, return_counts=True))
-        scaled_node_energies = energies * jnp.take(self.scale, cg.nodes.species) + jnp.take(
-            self.shift, cg.nodes.species
+        num_atoms = jnp.clip(cg.n_node, 1.0, None)
+        scale = jax.ops.segment_sum(
+            jnp.take(self.scale, cg.nodes.species), cg.nodes.graph_i, cg.n_total_graphs
         )
-        scaled_graph_energies = self.reduction(
-            scaled_node_energies, cg.nodes.graph_i, cg.n_total_graphs, ctx=ctx
+        softplus_intercept = jnp.log(jnp.e - 1)
+        scale = (
+            jax.nn.softplus(scale + softplus_intercept)
+            / num_atoms
+            * jax.nn.softplus(self.global_shift)
         )
+        shift = jax.ops.segment_sum(
+            jnp.take(self.shift, cg.nodes.species), cg.nodes.graph_i, cg.n_total_graphs
+        )
+        shift = shift / num_atoms + self.global_shift
 
-        num_atoms = jax.ops.segment_sum(
-            jnp.ones_like(scaled_node_energies), cg.nodes.graph_i, cg.n_total_graphs
-        )
-        scaled_outs = scaled_graph_energies * jnp.exp(self.global_scale) + self.global_shift
-        scaled_outs = scaled_outs / (num_atoms + 1e-6)
+        graph_energies = self.reduction(energies, cg.nodes.graph_i, cg.n_total_graphs, ctx=ctx)
+        # debug_stat(scale=scale, shift=shift, energies=graph_energies)
+        scaled_outs = graph_energies * scale + shift
+
         return scaled_outs[..., None]
 
 
@@ -102,10 +109,13 @@ class MACELayer(nn.Module):
         radial_embedding: jnp.ndarray,  # [n_edges, radial_embedding_dim]
         receivers: jnp.ndarray,  # [n_edges]
         species_embed: Float[Array, 'num_species num_embed'] | None,
+        avg_num_neighbors: Float[Array, '1'],
         ctx: Context,
     ):
         """-> (n_nodes output_irreps, n_nodes features*hidden_irreps)"""
-        x = self.interaction(vectors, node_feats, radial_embedding, receivers, ctx=ctx)
+        x = self.interaction(
+            vectors, node_feats, radial_embedding, receivers, avg_num_neighbors, ctx=ctx
+        )
         x = self.self_connection(x, node_species, species_embed, ctx)
         if self.residual:
             # resid = Linear(x.irreps, force_irreps_out=True, name='residual')(node_feats)
@@ -138,6 +148,7 @@ class MACE(IrrepsModule):
     share_species_embed: bool
     residual: bool
     resid_init: Callable
+    dataset_metadata: DatasetMetadata
 
     def setup(self):
         layers = []
@@ -191,6 +202,7 @@ class MACE(IrrepsModule):
         radial_embedding = self.radial_embedding(safe_norm(vectors.array, axis=-1), ctx=ctx)
         radial_embedding = radial_embedding.astype(vectors.dtype)
         # debug_structure(radial_embedding=radial_embedding)
+        avg_num_neighbors = self.radial_embedding.avg_num_neighbors(self.dataset_metadata)
 
         # vector_shs = e3nn.spherical_harmonics(self.interaction_templ.conv.max_ell, vectors, True)
         vector_shs = e3nn.spherical_harmonics(
@@ -208,6 +220,7 @@ class MACE(IrrepsModule):
                 radial_embedding,
                 receivers,
                 species_embed=species_embs.array if self.share_species_embed else None,
+                avg_num_neighbors=avg_num_neighbors,
                 ctx=ctx,
             )
             if readout is not None:
@@ -231,6 +244,7 @@ class MaceModel(nn.Module):
     residual: bool
     resid_init: Callable
     rescale: nn.Module
+    dataset_metadata: DatasetMetadata
 
     precision: Literal['f32', 'bf16']
     outs_per_node: int
@@ -253,6 +267,7 @@ class MaceModel(nn.Module):
             share_species_embed=self.share_species_embed,
             residual=self.residual,
             resid_init=self.resid_init,
+            dataset_metadata=self.dataset_metadata,
         )
 
         self.norm = nn.LayerNorm()
@@ -280,7 +295,7 @@ class MaceModel(nn.Module):
         else:
             out = EinsOp('nodes blocks mul -> nodes mul', reduce=self.block_reduction)(mace_out)
 
-        out = self.norm(out)
+        # out = self.norm(out)
 
         mlp_out = self.head(out, ctx=ctx)[..., 0]
         return self.rescale(cg, mlp_out, ctx=ctx)

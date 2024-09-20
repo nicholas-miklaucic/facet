@@ -105,7 +105,7 @@ def item_if_arr(x: int | float | jax.Array) -> float:
 def get_or_init(mod: nn.Module, name: str, constant: jax.Array, trainable: bool):
     """If trainable, return a parameter initialized from the module with the given name that starts
     as the constant. If not, return the constant."""
-    if trainable:
+    if not trainable:
         return constant
     else:
 
@@ -142,9 +142,10 @@ class TreeVisitor:
 
 
 class StatsVisitor(TreeVisitor):
-    def __init__(self, sample_size: int = 10_000) -> None:
+    def __init__(self, sample_size: int = 10_000, pad=True) -> None:
         super().__init__()
         self.sample_size = sample_size
+        self.pad = pad
 
     def jax_arr(self, arr: jax.Array):
         flat = arr.flatten()
@@ -202,9 +203,11 @@ class StatsVisitor(TreeVisitor):
 
         try:
             quarts = f'({fmt(lo)} {fmt(q25)} {fmt(q50)} {fmt(q75)} {fmt(hi)})'
+            if self.pad:
+                quarts = f'{quarts:>50}'
         except ValueError:
             print(lo, q25, q50, q75, hi)
-        out = f'{quarts:>50} {summary}'
+        out = f'{quarts} {summary}'
         out += '~' if sampling else ''
 
         return out
@@ -213,7 +216,7 @@ class StatsVisitor(TreeVisitor):
         return format_scalar(x, 4)
 
     def np_arr(self, arr: np.ndarray):
-        return '(np)' + self.jax_arr(jnp.array(arr))
+        return '(np)' + self.jax_arr(jnp.array(arr)).removeprefix(' ' * len('(np)'))
 
 
 class StructureVisitor(TreeVisitor):

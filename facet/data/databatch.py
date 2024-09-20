@@ -125,7 +125,7 @@ class CrystalGraphs(struct.PyTreeNode):
         )
 
         other = other.replace(nodes=other_nodes, edges=other_edges)
-        return jax.tree.map(lambda x, y: np.concatenate((x, y)), self, other)
+        return jax.tree.map(lambda x, y: np.concatenate((x, y), axis=0), self, other)
 
     def padded(self, n_node: int, k: int, n_graph: int):
         """Pad the graph to the given shape. Adds a single padding graph
@@ -150,7 +150,9 @@ class CrystalGraphs(struct.PyTreeNode):
             edges=EdgeData.new_empty(nodes, k),
             graph_data=CrystalData.new_empty(graphs),
             target_data=TargetInfo.new_empty(graphs, nodes),
-            n_node=np.concatenate((empty([nodes]), empty(graphs - 1, np.int16))),
+            n_node=np.concatenate(
+                (np.array([nodes], dtype=np.uint16), empty([graphs - 1], np.uint16))
+            ),
             padding_mask=empty(graphs, dtype=np.bool_),
         )
 

@@ -5,6 +5,7 @@ import jax.numpy as jnp
 from flax import linen as nn
 from jaxtyping import Float, Array
 
+from facet.data.metadata import DatasetMetadata
 from facet.layers import Context, E3IrrepsArray, Identity
 from facet.utils import get_or_init
 
@@ -38,6 +39,10 @@ class RadialEmbeddingBlock(nn.Module):
         self.param_rmax = get_or_init(
             self, 'rmax', jnp.array([self.r_max], dtype=jnp.float32), self.r_max_trainable
         )
+
+    def avg_num_neighbors(self, metadata: DatasetMetadata) -> Float[Array, '1']:
+        """Estimates average number of neighbors with given cutoff."""
+        return metadata.avg_num_neighbors(self.param_rmax)  # type: ignore
 
     def __call__(self, edge_lengths: Float[Array, '*batch'], ctx: Context) -> E3IrrepsArray:
         """*batch -> *batch num_basis"""

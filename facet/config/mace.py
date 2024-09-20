@@ -1,6 +1,6 @@
 from collections.abc import Sequence
 import logging
-from typing import Union
+from typing import Optional, Union
 
 import jax.numpy as jnp
 import numpy as np
@@ -113,7 +113,7 @@ class MessageConfig:
 @dataclass
 class SimpleMixMessageConfig(MessageConfig):
     kind: Const('simple-mix-mlp-conv') = 'simple-mix-mlp-conv'
-    avg_num_neighbors: float = 14
+    avg_num_neighbors: Optional[float] = None
     max_ell: int = 3
     radial_mix: MLPConfig = field(default_factory=MLPConfig)
 
@@ -129,7 +129,7 @@ class SimpleMixMessageConfig(MessageConfig):
 @dataclass
 class SevenNetConvConfig(MessageConfig):
     kind: Const('sevennet-conv') = 'sevennet-conv'
-    avg_num_neighbors: float = 14
+    avg_num_neighbors: Optional[float] = None
     max_ell: int = 2
     radial_weight: MLPConfig = field(
         default_factory=lambda: MLPConfig(
@@ -389,4 +389,5 @@ class MACEConfig:
             residual=self.residual,
             precision=precision,  # type: ignore
             resid_init=Layer(self.resid_init).build(),
+            dataset_metadata=metadata,
         )

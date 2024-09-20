@@ -34,13 +34,13 @@ if __name__ == '__main__' or True:
     batches = sorted((data_folder / 'raw').glob('batch_*.pkl'))    
     names = [batch_fn.stem.removeprefix('batch_') for batch_fn in batches]
 
-    names = names[:1]
+    # names = names[:1]
         
     for name in names:
         res = processor.process_batch(name, overwrite=True, max_batches=0)        
         print(f'Finished {res}')
         gc.collect()
 
-    # processor.save_raw_metadata()
+    processor.save_raw_metadata()
 
     print('Done!')

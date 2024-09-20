@@ -13,7 +13,7 @@ import operator
 
 
 class MPConv(IrrepsModule):
-    avg_num_neighbors: float
+    avg_num_neighbors: float | None
     max_ell: int
 
     def __call__(
@@ -22,6 +22,7 @@ class MPConv(IrrepsModule):
         node_feats: E3IrrepsArray,  # [n_nodes, irreps]
         radial_embedding: E3IrrepsArray,  # [n_nodes, k, radial_embedding_dim]
         receivers: jnp.ndarray,  # [n_nodes, k]
+        avg_num_neighbors: jnp.ndarray,  # 1
         ctx: Context,
     ) -> E3IrrepsArray:
         raise NotImplementedError
@@ -62,8 +63,14 @@ class SevenNetConv(MPConv):
         node_feats: E3IrrepsArray,  # [n_nodes, irreps]
         radial_embedding: E3IrrepsArray,  # [n_nodes, k, radial_embedding_dim]
         receivers: jnp.ndarray,  # [n_nodes, k]
+        avg_num_neighbors: jnp.ndarray,  # 1
         ctx: Context,
     ) -> E3IrrepsArray:
+        avg_num_neighbors = (
+            jnp.array([self.avg_num_neighbors])
+            if self.avg_num_neighbors is not None
+            else avg_num_neighbors
+        )
         # Nequip outline, just the parts we're doing here:
         # TP + aggregate
         # divide by average number of neighbors
@@ -172,7 +179,7 @@ class SevenNetConv(MPConv):
         h = h.astype(h_type)
 
         # normalize by the average (not local) number of neighbors
-        h = h / self.avg_num_neighbors
+        h = h / avg_num_neighbors
 
         return h
 
@@ -194,8 +201,14 @@ class NodeFeatureMLPWeightedConv(MPConv):
         node_feats: E3IrrepsArray,  # [n_nodes, irreps]
         radial_embedding: E3IrrepsArray,  # [n_nodes, k, radial_embedding_dim]
         receivers: jnp.ndarray,  # [n_nodes, k]
+        avg_num_neighbors: jnp.ndarray,  # 1
         ctx: Context,
     ) -> E3IrrepsArray:
+        avg_num_neighbors = (
+            jnp.array([self.avg_num_neighbors])
+            if self.avg_num_neighbors is not None
+            else avg_num_neighbors
+        )
         edge_sh = vectors
 
         # map node features onto edges for tp
@@ -302,7 +315,7 @@ class NodeFeatureMLPWeightedConv(MPConv):
         h = h.astype(h_type)
 
         # normalize by the average (not local) number of neighbors
-        h = h / self.avg_num_neighbors
+        h = h / avg_num_neighbors
 
         return h
 
@@ -317,9 +330,15 @@ class SimpleMixMLPConv(MPConv):
         node_feats: E3IrrepsArray,  # [n_nodes, irreps]
         radial_embedding: E3IrrepsArray,  # [n_nodes, k, radial_embedding_dim]
         receivers: jnp.ndarray,  # [n_nodes, k]
+        avg_num_neighbors: jnp.ndarray,  # 1
         ctx: Context,
     ) -> E3IrrepsArray:
         """-> n_nodes irreps"""
+        avg_num_neighbors = (
+            jnp.array([self.avg_num_neighbors])
+            if self.avg_num_neighbors is not None
+            else avg_num_neighbors
+        )
         messages_broadcast = node_feats[
             jnp.repeat(jnp.arange(node_feats.shape[0])[..., None], 16, axis=-1)
         ]
@@ -359,7 +378,7 @@ class SimpleMixMLPConv(MPConv):
         zeros = E3IrrepsArray.zeros(messages.irreps, node_feats.shape[:1], messages.dtype)
         # TODO flip this perhaps?
         node_feats = zeros.at[receivers].add(messages)  # [n_nodes, irreps]
-        node_feats = node_feats / self.avg_num_neighbors
+        node_feats = node_feats / avg_num_neighbors
 
         return node_feats
 
@@ -374,12 +393,13 @@ class SimpleInteraction(IrrepsModule):
         node_feats: E3IrrepsArray,  # [n_nodes, irreps]
         radial_embedding: jnp.ndarray,  # [n_edges, radial_embedding_dim]
         receivers: jnp.ndarray,  # [n_edges, ]
+        avg_num_neighbors: jnp.ndarray,  # 1
         ctx: Context,
     ) -> tuple[E3IrrepsArray, E3IrrepsArray]:
         """-> n_nodes irreps"""
         new_node_feats = Linear(node_feats.irreps, name='linear_intro')(node_feats)
         new_node_feats = self.conv.copy(irreps_out=self.ir_out)(
-            vectors, new_node_feats, radial_embedding, receivers, ctx
+            vectors, new_node_feats, radial_embedding, receivers, avg_num_neighbors, ctx
         )
         new_node_feats = Linear(self.ir_out, name='linear_outro', force_irreps_out=True)(
             new_node_feats

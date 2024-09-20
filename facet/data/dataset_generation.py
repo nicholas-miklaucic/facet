@@ -136,12 +136,32 @@ def make_data_id_mp2022(df):
         .astype(int)
     )
 
-    is_mvc = df['dataset-id'].str.contains('mp-', regex=False).astype(int)
+    is_mp = df['dataset-id'].str.contains('mp-', regex=False).astype(int)
     is_gga = df['dataset-id'].str.contains('-GGA', regex=False).astype(int)
     is_u = df['dataset-id'].str.contains('+U', regex=False).astype(int)
 
-    data_id = base_id * 10 + (is_mvc * 4 + is_gga * 2 + is_u)
+    data_id = base_id * 10 + (is_mp * 4 + is_gga * 2 + is_u)
     return data_id
+
+
+def parse_data_id_mp2022(data_id):
+    base_id = data_id // 10
+    rem = data_id % 10
+    is_mp, is_gga, is_u = [bool(int(x)) for x in np.binary_repr(rem)]
+
+    out = str(base_id)
+    if is_mp:
+        out = f'mp-{out}'
+    else:
+        out = f'mvc-{out}'
+
+    if is_gga:
+        out = f'{out}-GGA'
+
+    if is_u:
+        out = f'{out}-GGA+U'
+
+    return out
 
 
 def make_data_id_mptrj(df):
@@ -199,8 +219,8 @@ class GraphSummarizer:
 
     def update(self, species, energy):
         self.max_species = max(self.max_species, max(species))
-        self.energies.append(energy / len(species))
-        self.total_energies.append(energy)
+        self.energies.append(energy)
+        self.total_energies.append(energy * len(species))
         self.species.append(Counter(species))
 
     def to_df(self):
@@ -269,17 +289,17 @@ class BatchProcessor:
         )
 
         if 'force' in row:
-            force = row['force']
+            force = np.array(row['force'])
         else:
             force = nodes.cart * 0
 
         if 'stress' in row:
-            stress = row['stress']
+            stress = np.array([row['stress']])
         else:
             stress = np.array([struct.lattice.matrix * 0])
 
         target = TargetInfo(
-            e_form=np.array([row[self.energy_key]]),
+            e_form=np.array([row[self.energy_key]]) / struct.num_sites,
             force=force,
             stress=stress,
         )
@@ -362,9 +382,10 @@ class BatchProcessor:
 
                 cgs.append(self.create_graph(row, data_id.iloc[i], edges))
 
-            cg = sum(cgs[1:], start=cgs[0])
+            cg: CrystalGraphs = sum(cgs[1:], start=cgs[0])  # type: ignore
             cg = cg.padded(self.num_batch * self.num_atoms, self.k, self.num_batch)
             self.tracker.update(cg)
+            assert len(cg.n_node) == self.num_batch
             save_pytree(cg, out_fn)
 
         return batch_name

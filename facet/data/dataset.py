@@ -33,6 +33,8 @@ def load_raw(config: 'MainConfig', group_num=0, file_num=0):
 def process_raw(raw_data) -> CrystalGraphs:
     nodes, k = raw_data['edges']['receiver'].shape
     graphs = raw_data['padding_mask'].shape[0]
+    # debug_structure(raw_data=raw_data, templ=CrystalGraphs.new_empty(nodes, k, graphs))
+    # raw_data['n_node'] = raw_data['n_node'][:graphs]
     data: CrystalGraphs = from_state_dict(
         CrystalGraphs.new_empty(nodes, k, graphs),
         raw_data,
@@ -44,15 +46,7 @@ def process_raw(raw_data) -> CrystalGraphs:
 
 def load_file(config: 'MainConfig', group_num=0, file_num=0) -> CrystalGraphs:
     """Loads a file. Lacks the complex data loader logic, but easier to use for testing."""
-    # the documentation mistakenly listed this as eV/atom, and I didn't check, but it's total
-    # eventually I should redo it
     cg: CrystalGraphs = process_raw(load_raw(config, group_num, file_num))
-    if config.data.dataset_name == 'mp2022':
-        cg = cg.replace(
-            target_data=cg.target_data.replace(
-                e_form=cg.target_data.e_form / jnp.clip(cg.n_node, 1.0, None)
-            )
-        )
 
     return cg
 
@@ -87,9 +81,9 @@ def load_file_zarr(config: 'MainConfig', group_num=0, file_num=0):
 
 
 @jax.jit
-@chex.assert_max_traces(1)
+@chex.assert_max_traces(2)
 def stack_trees(cgs: Sequence[CrystalGraphs]) -> CrystalGraphs:
-    return jax.tree_map(lambda *args: jnp.stack(args), *cgs)
+    return jax.tree.map(lambda *args: jnp.stack(args), *cgs)
 
 
 def dataloader_base(

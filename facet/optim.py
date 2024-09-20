@@ -3,13 +3,8 @@ Optimizer functionality.
 """
 
 from typing import NamedTuple
-import chex
-from optax._src import base, utils
-from optax._src.transform import update_moment
-import jax.numpy as jnp
+from optax._src import base
 import jax
-from chex import dataclass
-import functools as ft
 
 
 class EmaParamsState(NamedTuple):
