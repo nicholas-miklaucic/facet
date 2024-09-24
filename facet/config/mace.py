@@ -4,7 +4,7 @@ from typing import Optional, Union
 
 import jax.numpy as jnp
 import numpy as np
-from flax.struct import dataclass
+from facet.config.common import dataclass
 import flax.linen as nn
 from pyrallis.fields import field
 
@@ -101,7 +101,7 @@ class RadialEmbeddingConfig:
             r_max_trainable=self.r_max_trainable,
             basis=self.radial_basis.build(),
             envelope=self.envelope.build(),
-            radius_transform=Layer(self.radius_transform).build(),
+            radius_transform=Layer(name=self.radius_transform).build(),
         )
 
 
@@ -143,7 +143,7 @@ class SevenNetConvConfig(MessageConfig):
     def build(self) -> SevenNetConv:
         if (
             self.radial_weight.final_activation != 'Identity'
-            and Layer(self.radial_weight.final_activation).build()(0.0) != 0
+            and Layer(name=self.radial_weight.final_activation).build()(0.0) != 0
         ):
             raise ValueError('Final activation for radial MLP must go through origin.')
 
@@ -242,7 +242,7 @@ class S2ActivationConfig:
 
     def build(self) -> S2Activation:
         return S2Activation(
-            activation=Layer(self.activation).build(),
+            activation=Layer(name=self.activation).build(),
             res_beta=self.res_beta,
             res_alpha=self.res_alpha,
             normalization=self.normalization,  # type: ignore
@@ -388,6 +388,6 @@ class MACEConfig:
             block_reduction=self.block_reduction,
             residual=self.residual,
             precision=precision,  # type: ignore
-            resid_init=Layer(self.resid_init).build(),
+            resid_init=Layer(name=self.resid_init).build(),
             dataset_metadata=metadata,
         )

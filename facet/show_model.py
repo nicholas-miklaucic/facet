@@ -23,6 +23,8 @@ def to_dot_graph(x):
 
 def show_model(config: MainConfig, make_hlo_dot=False, do_profile=False, show_stat=False):
     # print(config.data.avg_dist(6), config.data.avg_num_neighbors(6))
+    config.batch_size = 32
+    config.model.resid_init = 'ones'
     kwargs = dict(ctx=Context(training=False))
     num_batches, dl = dataloader(config, split='train', infinite=True)
     for i, b in zip(range(2), dl):
@@ -49,48 +51,52 @@ def show_model(config: MainConfig, make_hlo_dot=False, do_profile=False, show_st
     # params = jax.device_put_replicated(params, config.device.devices())
 
     base_apply_fn = jax.vmap(
-        lambda p, b: config.train.loss.efs_wrapper(mod.apply, p, b, rngs=rngs, **kwargs),
-        in_axes=(None, 0),
+        lambda p, b, t: config.train.loss.efs_wrapper(
+            mod.apply, p, b, rngs=rngs, ctx=Context(training=t)
+        ),
+        in_axes=(None, 0, None),
     )
-    apply_fn = jax.jit(base_apply_fn)
+    apply_fn = jax.jit(base_apply_fn, static_argnums=2)
 
-    def loss_fn(params, preds=None):
+    def loss_fn(params, preds=None, training=True):
         if preds is None:
-            preds = apply_fn(params, batch)
+            preds = apply_fn(params, batch, training)
         return jax.tree.map(jnp.mean, jax.vmap(config.train.loss.efs_loss)(batch, preds))
 
     with jax.debug_nans():
-        out = apply_fn(params, batch)
+        out = apply_fn(params, batch, True)
         loss = loss_fn(params, out)
 
-    # kwargs['cg'] = b1
-    # print(params['params']['edge_proj']['kernel'].devices())
-    # TODO debugging module breaks?
+    kwargs['cg'] = b1
+
     debug_structure(out=out, loss=loss)
     debug_stat(input=batch, out=out, loss=loss, vecs=edge_vecs(b1))
     rngs.pop('params')
 
-    rot_batch, rots = jax.vmap(lambda x: x.rotate(123))(batch)
+    rot_batch1, rots1 = jax.vmap(lambda x: x.rotate(123))(batch)
+    rot_batch2, rots2 = jax.vmap(lambda x: x.rotate(234))(rot_batch1)
     # debug_structure(rots=rots)
 
     if show_stat:
         with nn.intercept_methods(intercept_stat):
-            rot_out = base_apply_fn(params, rot_batch)
+            rot_out1 = base_apply_fn(params, rot_batch1, False)
     else:
-        rot_out = apply_fn(params, rot_batch)
+        rot_out1 = apply_fn(params, rot_batch1, False)
+
+    rot_out2 = apply_fn(params, rot_batch2, False)
 
     debug_stat(
         equiv_error=jax.tree.map(
             lambda x, y: jnp.abs(x - y),
-            rot_out,
-            jax.vmap(lambda o, r, c: o.rotate(r, c))(out, rots, batch),
+            rot_out2,
+            jax.vmap(lambda o, r, c: o.rotate(r, c))(rot_out1, rots2, rot_batch1),
         )
     )
 
-    flax_summary(mod, rngs=rngs, cg=b1, console_kwargs={'width': 200}, **kwargs)
+    flax_summary(mod, rngs=rngs, console_kwargs={'width': 200}, **kwargs)
 
     val_and_grad = jax.jit(jax.value_and_grad(lambda x: jnp.mean(loss_fn(x)['loss'])))
-    cost_analysis = val_and_grad.lower(params).cost_analysis()
+    cost_analysis = val_and_grad.lower(params).compile().cost_analysis()[0]
     if cost_analysis is not None and 'flops' in cost_analysis:
         cost = cost_analysis['flops']
     else:

@@ -76,11 +76,8 @@ class SpeciesWiseRescale(nn.Module):
             jnp.take(self.scale, cg.nodes.species), cg.nodes.graph_i, cg.n_total_graphs
         )
         softplus_intercept = jnp.log(jnp.e - 1)
-        scale = (
-            jax.nn.softplus(scale + softplus_intercept)
-            / num_atoms
-            * jax.nn.softplus(self.global_shift)
-        )
+        transform = lambda x: jax.nn.softplus(x + softplus_intercept)
+        scale = transform(scale) / num_atoms * transform(self.global_scale)
         shift = jax.ops.segment_sum(
             jnp.take(self.shift, cg.nodes.species), cg.nodes.graph_i, cg.n_total_graphs
         )
@@ -129,6 +126,11 @@ class MACELayer(nn.Module):
             )(x, ctx)
             resid = ResidualAdapter(x.irreps)(node_feats, ctx=ctx)
             x = x + resid
+
+        layer_norm = E3LayerNorm(
+            separation='scalars', scale_init=nn.initializers.ones, name='layer_norm'
+        )
+        x = layer_norm(x, ctx=ctx)
 
         if self.readout is not None:
             readout = self.readout(x, ctx=ctx)
@@ -271,9 +273,9 @@ class MaceModel(nn.Module):
         )
 
         self.norm = nn.LayerNorm()
-        self.node2graph_reduction = SegmentReduction('mean')
         self.head = self.head_templ.copy(out_dim=1, name='head')
         self.dtype = jnp.float32 if self.precision == 'f32' else jnp.bfloat16
+        self.head_dropout = nn.Dropout(self.head_templ.dropout_rate)
 
     def __call__(
         self,
@@ -297,5 +299,6 @@ class MaceModel(nn.Module):
 
         # out = self.norm(out)
 
+        out = self.head_dropout(out, deterministic=not ctx.training)
         mlp_out = self.head(out, ctx=ctx)[..., 0]
         return self.rescale(cg, mlp_out, ctx=ctx)

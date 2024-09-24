@@ -10,9 +10,9 @@ from jaxtyping import ArrayLike
 import numpy as np
 import optax
 import pyrallis
-from flax.struct import dataclass
-from pyrallis.fields import field
+from pyrallis.fields import field as _field
 
+from facet.config.common import dataclass
 from facet.config.mace import MACEConfig
 from facet.config.utils import Const
 from facet.data.metadata import DatasetMetadata
@@ -21,6 +21,9 @@ from facet.regression import EFSLoss, EFSWrapper
 from facet.utils import load_pytree
 
 pyrallis.set_config_type('toml')
+
+# field = lambda *args, **kwargs: _field(*args, **kwargs, is_mutable=True)
+field = _field
 
 
 @dataclass
@@ -391,6 +394,9 @@ class AdamWConfig(OptimizerConfig):
     # Use Mechanize to automatically tune the learning rate.
     mechanize: bool = False
 
+    # Use schedule-free learning.
+    schedule_free: bool = False
+
     def build(self, learning_rate: optax.ScalarOrSchedule) -> optax.GradientTransformation:
         tx = optax.adamw(
             learning_rate,
@@ -401,6 +407,14 @@ class AdamWConfig(OptimizerConfig):
         )
         if self.mechanize:
             tx = optax.contrib.mechanize(tx)
+
+        if self.schedule_free:
+            tx = optax.contrib.schedule_free_adamw(
+                self.base_lr,
+                b1=self.beta_1,
+                b2=self.beta_2,
+                weight_decay=self.weight_decay,
+            )
 
         return tx
 
@@ -431,6 +445,7 @@ class ProdigyConfig(OptimizerConfig):
             betas=(self.beta_1, self.beta_2),
             weight_decay=self.weight_decay,
             estim_lr_coef=self.base_lr,
+            safeguard_warmup=True,
         )
 
         return tx

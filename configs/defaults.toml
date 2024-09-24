@@ -31,12 +31,7 @@ logs_per_epoch = 16
 epochs_per_ckpt = 5
 epochs_per_valid = 0.5
 tags = []
-log_params = [
-    "edge_embedding/basis/mu",
-    "edge_embedding/basis/sigma",
-    "edge_embedding/basis/freq",
-    "edge_embedding/rmax",
-]
+log_params = [ "edge_embedding/basis/mu", "edge_embedding/basis/sigma", "edge_embedding/basis/freq", "edge_embedding/rmax",]
 
 [train]
 base_lr = 1.0
@@ -92,6 +87,8 @@ kind = "s2-mlp-mixer"
 kind = "species-wise"
 scale_trainable = false
 shift_trainable = false
+global_scale_trainable = false
+global_shift_trainable = false
 
 [model.head]
 inner_dims = []
@@ -131,7 +128,6 @@ c = 0.1
 
 [model.interaction.message]
 kind = "sevennet-conv"
-avg_num_neighbors = 14
 max_ell = 2
 
 [model.self_connection.s2_grid]

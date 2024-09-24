@@ -123,7 +123,7 @@ class TrainingRun:
             keep_time_interval=timedelta(minutes=30),
         )
         self.mngr = ocp.CheckpointManager(
-            ocp.test_utils.create_empty('/tmp/jax_ckpt'),
+            ocp.test_utils.erase_and_create_empty('/tmp/jax_ckpt'),
             options=opts,
         )
 
@@ -199,6 +199,7 @@ class TrainingRun:
             mesh=mesh,
             in_specs=(P(None), P('batch')),
             out_specs=P('batch'),
+            check_rep=False,
         )
         def ploss_fn(params, batch):
             loss = loss_fn(params, batch)
@@ -244,6 +245,7 @@ class TrainingRun:
             mesh=mesh,
             in_specs=(P(None), P('batch')),
             out_specs=(P(), P('batch')),
+            check_rep=False,
         )
         def pgrad_fn(params, batch):
             grads, preds = vgrad_fn(params, batch)
@@ -303,7 +305,14 @@ class TrainingRun:
 
     @property
     def eval_state(self) -> TrainState:
-        return eval_state(self.state)
+        estate = eval_state(self.state)
+        if getattr(self.config.train.optimizer, 'schedule_free', False):
+            # debug_structure(estate.opt_state)
+            return estate.replace(
+                params=optax.contrib.schedule_free_eval_params(estate.opt_state[0], estate.params)
+            )
+        else:
+            return estate
 
     def step(self, step: int, batch: CrystalGraphs):
         self.curr_step = step

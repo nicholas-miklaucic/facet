@@ -3,7 +3,7 @@ from typing import Any, Callable, Optional
 import jax.numpy as jnp
 import pyrallis
 from flax import linen as nn
-from flax.struct import dataclass
+from facet.config.common import dataclass
 from pyrallis.fields import field
 
 from facet import layers
@@ -71,8 +71,8 @@ class MLPConfig:
         return LazyInMLP(
             inner_dims=self.inner_dims,
             out_dim=self.out_dim,
-            inner_act=Layer(self.activation).build(),
-            final_act=Layer(self.final_activation).build(),
+            inner_act=Layer(name=self.activation).build(),
+            final_act=Layer(name=self.final_activation).build(),
             dropout_rate=self.dropout,
             residual=self.residual,
             use_bias=self.use_bias,
