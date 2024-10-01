@@ -19,7 +19,10 @@ from facet.data.metadata import DatasetMetadata
 from facet.mace.e3_layers import (
     E3LayerNorm,
     IrrepsModule,
+    Linear,
+    LinearAdapter,
     ResidualAdapter,
+    ResidualLinearAdapter,
 )
 from facet.layers import SegmentReduction, SegmentReductionKind
 from facet.layers import Context, LazyInMLP, E3Irreps, E3IrrepsArray, edge_vecs
@@ -114,16 +117,23 @@ class MACELayer(nn.Module):
             vectors, node_feats, radial_embedding, receivers, avg_num_neighbors, ctx=ctx
         )
         x = self.self_connection(x, node_species, species_embed, ctx)
+        # if '0e' not in x.irreps:
+        #     scalar_out = self.interaction.ir_out.filter('0e')
+        #     project_init = LinearAdapter(irreps_out=str(scalar_out), name='project_init')
+        #     projected = project_init(node_feats, ctx=ctx)
+        #     # debug_structure(projected=projected, x=x)
+        #     x = e3nn.concatenate(
+        #         [projected, x],
+        #         axis=-1,
+        #     )
         if self.residual:
-            # resid = Linear(x.irreps, force_irreps_out=True, name='residual')(node_feats)
-            # resid used to happen before SC as well
-            # debug_stat(resid=resid, x=x)
             x = E3LayerNorm(
                 separation='scalars',
                 scale_init=self.resid_init,
                 learned_scale=True,
                 name='resid_ln',
             )(x, ctx)
+            # resid = ResidualLinearAdapter(x.irreps)(node_feats, ctx=ctx)
             resid = ResidualAdapter(x.irreps)(node_feats, ctx=ctx)
             x = x + resid
 
@@ -208,7 +218,9 @@ class MACE(IrrepsModule):
 
         # vector_shs = e3nn.spherical_harmonics(self.interaction_templ.conv.max_ell, vectors, True)
         vector_shs = e3nn.spherical_harmonics(
-            e3nn.Irreps.spherical_harmonics(self.interaction_templ.conv.max_ell, p=1),
+            e3nn.Irreps(
+                ' + '.join([f'{ell}e' for ell in range(0, self.interaction_templ.conv.max_ell + 1)])
+            ),
             vectors,
             normalize=True,
         )

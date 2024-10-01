@@ -385,6 +385,8 @@ class SimpleMixMLPConv(MPConv):
 
 class SimpleInteraction(IrrepsModule):
     conv: MPConv
+    linear_intro: bool
+    linear_outro: bool
 
     @nn.compact
     def __call__(
@@ -397,12 +399,18 @@ class SimpleInteraction(IrrepsModule):
         ctx: Context,
     ) -> tuple[E3IrrepsArray, E3IrrepsArray]:
         """-> n_nodes irreps"""
-        new_node_feats = Linear(node_feats.irreps, name='linear_intro')(node_feats)
+        if self.linear_intro:
+            new_node_feats = Linear(node_feats.irreps, name='linear_intro')(node_feats)
+        else:
+            new_node_feats = node_feats
+
         new_node_feats = self.conv.copy(irreps_out=self.ir_out)(
             vectors, new_node_feats, radial_embedding, receivers, avg_num_neighbors, ctx
         )
-        new_node_feats = Linear(self.ir_out, name='linear_outro', force_irreps_out=True)(
-            new_node_feats
-        )
+
+        if self.linear_outro:
+            new_node_feats = Linear(self.ir_out, name='linear_outro', force_irreps_out=True)(
+                new_node_feats
+            )
 
         return new_node_feats  # [n_nodes, target_irreps]

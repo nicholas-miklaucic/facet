@@ -184,9 +184,16 @@ class InteractionConfig:
 @dataclass
 class SimpleInteractionBlockConfig(InteractionConfig):
     kind: Const('simple') = 'simple'
+    linear_intro: bool = True
+    linear_outro: bool = True
 
     def build(self) -> SimpleInteraction:
-        return SimpleInteraction(irreps_out=None, conv=self.message.build())
+        return SimpleInteraction(
+            irreps_out=None,
+            conv=self.message.build(),
+            linear_intro=self.linear_intro,
+            linear_outro=self.linear_outro,
+        )
 
 
 @dataclass

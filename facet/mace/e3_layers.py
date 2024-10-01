@@ -42,7 +42,39 @@ class LinearAdapter(IrrepsAdapter):
 
 
 class ResidualAdapter(IrrepsAdapter):
-    """Simple adapter for residual connections. Simply truncates and pads with 0s as appropriate."""
+    """Simple residual adapter: pads with zeros and truncates instead of using any trained weights."""
+
+    @nn.compact
+    def __call__(self, x: E3IrrepsArray, ctx: Context) -> E3IrrepsArray:
+        """batch irreps -> batch irreps_out"""
+        x = x.simplify()
+        out_chunks = []
+        for out_mul, out_ir in self.ir_out:
+            added = False
+            for (in_mul, in_ir), chunk in zip(x.irreps, x.chunks):
+                if added:
+                    continue
+
+                if in_ir == out_ir:
+                    added = True
+                    if in_mul == out_mul:  # no change needed
+                        out_chunks.append(chunk)
+                    elif in_mul < out_mul:  # pad with zeros
+                        pad_len = out_mul - in_mul
+                        pad_shape = list(chunk.shape)
+                        pad_shape[-2] = pad_len
+                        pad = jnp.zeros(pad_shape, dtype=chunk.dtype)
+                        out_chunks.append(jnp.concat((chunk, pad), axis=-2))
+                    else:  # truncate
+                        out_chunks.append(chunk[..., :out_mul, :])
+
+            if not added:
+                out_chunks.append(None)
+        return e3nn.from_chunks(self.ir_out, out_chunks, leading_shape=x.shape[:-1])
+
+
+class ResidualLinearAdapter(IrrepsAdapter):
+    """Linear layers between irreps of the same type and different multiplicities."""
 
     @nn.compact
     def __call__(self, x: E3IrrepsArray, ctx: Context) -> E3IrrepsArray:

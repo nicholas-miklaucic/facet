@@ -1,13 +1,13 @@
-batch_size = 256
+batch_size = 512
 stack_size = 1
-num_epochs = 50
+num_epochs = 20
 precision = "f32"
 debug_mode = false
 do_profile = false
 display = "progress"
 
 [data]
-dataset_name = "mptrj"
+dataset_name = "mp2022"
 raw_data_folder = "data"
 data_folder = "precomputed"
 shuffle_seed = 29205
@@ -28,7 +28,7 @@ epochs_per_valid = 0.5
 tags = []
 
 [model]
-outs_per_node = 128
+outs_per_node = 64
 
 [train.lr_schedule]
 kind = "polynomial"
@@ -40,7 +40,7 @@ power = 1.0
 [train.optimizer]
 base_lr = 1.0
 kind = "prodigy"
-weight_decay = 0.001
+weight_decay = 1e-4
 beta_1 = 0.9
 beta_2 = 0.999
 
@@ -67,10 +67,14 @@ num_heads = 1
 use_bias = false
 normalization = "layer"
 
+[model.node_embed]
+embed_dim = 64
+kind = "linear"
+
 [model.rescale]
 kind = "species-wise"
-scale_trainable = true        # turning this off causes instability: ENB-19
-shift_trainable = true        # turning this off causes instability: ENB-19
+scale_trainable = true
+shift_trainable = true
 global_scale_trainable = true
 global_shift_trainable = true
 
@@ -87,14 +91,14 @@ loss_delta = 0.015625
 use_rmse = false
 
 [model.edge_embed]
-r_max = 7.2
+r_max = 8
 r_max_trainable = false
 
 [model.edge_embed.radial_basis]
-num_basis = 12
+num_basis = 16
 kind = "gauss"
-mu_max = 7
-sd = 0.33
+mu_max = 8
+sd = 0.125
 mu_trainable = false
 sd_trainable = false
 
@@ -102,6 +106,11 @@ sd_trainable = false
 kind = "exp"
 cutoff_start = 0.8
 c = 0.1
+
+[model.interaction]
+kind = 'simple'
+linear_intro = false
+linear_outro = true
 
 [model.interaction.message]
 kind = "sevennet-conv"
@@ -119,14 +128,14 @@ use_fft = false
 inner_dims = [32]
 activation = "silu"
 final_activation = "Identity"
-dropout = 0.2
+dropout = 0.3
 residual = false
 num_heads = 1
 use_bias = false
 normalization = "layer"
 
 [model.interaction.message.radial_weight]
-inner_dims = [64]
+inner_dims = []
 activation = "silu"
 final_activation = "Identity"
 dropout = 0.0

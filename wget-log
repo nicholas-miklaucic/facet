@@ -1,0 +1,11 @@
+--2024-10-01 13:33:19--  https://app.neptune.ai/o/facet/org/energy-beta/runs/details?viewId=standard-view
+Resolving app.neptune.ai (app.neptune.ai)... 35.186.223.74
+Connecting to app.neptune.ai (app.neptune.ai)|35.186.223.74|:443... connected.
+HTTP request sent, awaiting response... 200 OK
+Length: 1559 (1.5K) [text/html]
+Saving to: ‘details?viewId=standard-view’
+
+details?viewId=standard-view                           0%[                                                                                                                      ]       0  --.-KB/s               details?viewId=standard-view                         100%[=====================================================================================================================>]   1.52K  --.-KB/s    in 0.001s  
+
+2024-10-01 13:33:19 (1.05 MB/s) - ‘details?viewId=standard-view’ saved [1559/1559]
+
