@@ -5,6 +5,7 @@ precision = "f32"
 debug_mode = false
 do_profile = false
 display = "progress"
+checkpoint_params = "precomputed/sevennet.ckpt"
 
 [data]
 dataset_name = "mp2022"
@@ -14,7 +15,7 @@ shuffle_seed = 1618
 train_split = 30
 test_split = 3
 valid_split = 3
-batches_per_group = 0
+batches_per_group = 100
 
 [log]
 logs_per_epoch = 16
@@ -47,17 +48,17 @@ stress_weight = 0
 
 [train.lr_schedule]
 kind = "polynomial"
-warmup_frac = 0.1
-start_lr = 0.01
+warmup_frac = 0.01
+start_lr = 0.1
 end_lr = 0.01
 power = 1.0
 
 [train.optimizer]
-base_lr = 1.0
-kind = "prodigy"
-weight_decay = 0.001
-beta_1 = 0.9
-beta_2 = 0.999
+base_lr = 3e-5
+kind = "adamw"
+weight_decay = 1e-8
+beta_1 = 0.8
+beta_2 = 0.9
 
 [model.node_embed]
 embed_dim = 128

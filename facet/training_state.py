@@ -28,7 +28,7 @@ from facet.config import LossConfig, MainConfig
 from facet.data.dataset import CrystalGraphs, dataloader
 from facet.layers import Context
 from facet.model_summary import model_summary
-from facet.utils import debug_structure, get_nested_path, item_if_arr
+from facet.utils import debug_structure, get_nested_path, item_if_arr, load_pytree
 
 import neptune  # type: ignore
 from neptune.types import File  # type: ignore
@@ -326,9 +326,13 @@ class TrainingRun:
             )
 
             if self.config.restart_from is not None:
+                if self.config.checkpoint_params is not None:
+                    raise ValueError('Cannot give both restart_from and checkpoint_params')
                 self.state = self.state.replace(
                     params=best_ckpt(self.config.restart_from)['state']['params']
                 )
+            elif self.config.checkpoint_params is not None:
+                self.state = self.state.replace(params=load_pytree(self.config.checkpoint_params))
 
             # log number of parameters
             self.run['params'] = int(

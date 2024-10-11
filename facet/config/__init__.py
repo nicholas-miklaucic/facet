@@ -510,6 +510,9 @@ class MainConfig:
     # Folder to initialize all parameters from, if the folder exists.
     restart_from: Optional[Path] = None
 
+    # Checkpoint to use for parameters.
+    checkpoint_params: Optional[Path] = None
+
     # Precision: 'f32' or 'bf16'.
     precision: str = 'f32'
 
