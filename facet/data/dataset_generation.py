@@ -147,7 +147,7 @@ def make_data_id_mp2022(df):
 def parse_data_id_mp2022(data_id):
     base_id = data_id // 10
     rem = data_id % 10
-    is_mp, is_gga, is_u = [bool(int(x)) for x in np.binary_repr(rem)]
+    is_mp, is_gga, is_u = [bool(int(x)) for x in np.binary_repr(rem, width=3)]
 
     out = str(base_id)
     if is_mp:
@@ -387,5 +387,7 @@ class BatchProcessor:
             self.tracker.update(cg)
             assert len(cg.n_node) == self.num_batch
             save_pytree(cg, out_fn)
+
+        self.save_raw_metadata()
 
         return batch_name

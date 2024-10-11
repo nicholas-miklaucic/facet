@@ -188,7 +188,9 @@ class FlowRecorder:
         return out
 
 
-def visualize_model_flow(config: MainConfig, params: dict | None = None, is_dark: bool = False):
+def visualize_model_flow(
+    config: MainConfig, params: dict | None = None, is_dark: bool = False, return_html: bool = True
+):
     theme, cs = rp.mpl_setup(is_dark)
     rp.plotly_setup(is_dark)
 
@@ -333,8 +335,12 @@ def visualize_model_flow(config: MainConfig, params: dict | None = None, is_dark
                 )
             )
 
-    with ts.active_autovisualizer.set_scoped(irrep_array_visualizer):
-        return ts.render_to_html(obj.stack, compressed=False)
+    if return_html:
+        with ts.active_autovisualizer.set_scoped(irrep_array_visualizer):
+            return ts.render_to_html(obj.stack, compressed=False)
+    else:
+        with ts.active_autovisualizer.set_scoped(irrep_array_visualizer):
+            return ts.display(obj.stack)
 
 
 if __name__ == '__main__':

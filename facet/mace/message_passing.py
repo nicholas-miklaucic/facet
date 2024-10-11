@@ -1,7 +1,14 @@
 from typing import Callable
 from flax import linen as nn
 import jax.experimental
-from facet.mace.e3_layers import E3Irreps, E3IrrepsArray, IrrepsModule, Linear
+from facet.mace.e3_layers import (
+    E3Irreps,
+    E3IrrepsArray,
+    IrrepsModule,
+    Linear,
+    ResidualAdapter,
+    ResidualLinearAdapter,
+)
 import jax.numpy as jnp
 from e3nn_jax.legacy import FunctionalTensorProduct
 import e3nn_jax as e3nn
@@ -125,6 +132,8 @@ class SevenNetConv(MPConv):
                 )
             ]
 
+        # print(sorted_instructions)
+
         # TP between spherical harmonics embedding of the edge vector
         # Y_ij(\hat{r}) and neighboring node h_j, weighted on a per-element basis
         # by the radial network R(r_ij)
@@ -133,7 +142,7 @@ class SevenNetConv(MPConv):
             irreps_in2=edge_sh.irreps,
             irreps_out=irreps_after_tp,
             instructions=sorted_instructions,
-        )
+        )        
 
         # scalar radial network, number of output neurons is the total number of
         # tensor product paths, nonlinearity must have f(0)=0 and MLP must not
@@ -414,3 +423,30 @@ class SimpleInteraction(IrrepsModule):
             )
 
         return new_node_feats  # [n_nodes, target_irreps]
+
+
+class ResidualInteraction(IrrepsModule):
+    interaction: IrrepsModule
+
+    @nn.compact
+    def __call__(
+        self,
+        vectors: E3IrrepsArray,  # [n_edges, 3]
+        node_feats: E3IrrepsArray,  # [n_nodes, irreps]
+        radial_embedding: jnp.ndarray,  # [n_edges, radial_embedding_dim]
+        receivers: jnp.ndarray,  # [n_edges, ]
+        avg_num_neighbors: jnp.ndarray,  # 1
+        ctx: Context,
+    ) -> tuple[E3IrrepsArray, E3IrrepsArray]:
+        """-> n_nodes irreps"""
+        resid = Linear(self.ir_out, name='resid_adapter', force_irreps_out=True)(node_feats)
+        new_node_feats = self.interaction.copy(irreps_out=self.ir_out)(
+            vectors=vectors,
+            node_feats=node_feats,
+            radial_embedding=radial_embedding,
+            receivers=receivers,
+            avg_num_neighbors=avg_num_neighbors,
+            ctx=ctx,
+        )
+
+        return new_node_feats + resid  # [n_nodes, target_irreps]

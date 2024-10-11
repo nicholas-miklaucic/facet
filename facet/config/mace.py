@@ -10,21 +10,26 @@ from pyrallis.fields import field
 
 from facet.data.metadata import DatasetMetadata
 from facet.e3.activations import S2Activation
-from facet.mace.e3_layers import LinearAdapter
+from facet.layers import Identity
+from facet.mace.e3_layers import E3LayerNorm, LinearAdapter, ResidualAdapter
 from facet.mace.edge_embedding import (
     BesselBasis,
+    SincBasis,
     RadialBasis,
     RadialEmbeddingBlock,
     GaussBasis,
     ExpCutoff,
     Envelope,
+    XPLORCutoff
 )
 from facet.mace.mace import (
     MaceModel,
+    SevenNetRescale,
     SpeciesWiseRescale,
 )
 from facet.mace.message_passing import (
     NodeFeatureMLPWeightedConv,
+    ResidualInteraction,
     SevenNetConv,
     SimpleInteraction,
     SimpleMixMLPConv,
@@ -32,6 +37,7 @@ from facet.mace.message_passing import (
 from facet.mace.node_embedding import LinearNodeEmbedding
 from facet.mace.self_connection import (
     GateSelfConnection,
+    LinearSelfConnection,
     MLPSelfGate,
     S2SelfConnection,
 )
@@ -64,9 +70,11 @@ class GaussBasisConfig(RadialBasisConfig):
 class BesselBasisConfig(RadialBasisConfig):
     kind: Const('bessel') = 'bessel'
     freq_trainable: bool = True
+    use_sinc: bool = True
 
-    def build(self) -> BesselBasis:
-        return BesselBasis(num_basis=self.num_basis, freq_trainable=self.freq_trainable)
+    def build(self) -> SincBasis | BesselBasis:
+        basis = SincBasis if self.use_sinc else BesselBasis        
+        return basis(num_basis=self.num_basis, freq_trainable=self.freq_trainable)
 
 
 @dataclass
@@ -74,6 +82,14 @@ class EnvelopeConfig:
     def build(self) -> Envelope:
         raise NotImplementedError
 
+
+@dataclass
+class XPLORCutoffConfig:
+    kind: Const('xplor') = 'xplor'
+    cutoff_start: float = 0.95    
+
+    def build(self) -> ExpCutoff:
+        return XPLORCutoff(cutoff_on=self.cutoff_start)
 
 @dataclass
 class ExpCutoffConfig:
@@ -92,7 +108,7 @@ class RadialEmbeddingConfig:
     radial_basis: Union[GaussBasisConfig, BesselBasisConfig] = field(
         default_factory=GaussBasisConfig
     )
-    envelope: Union[ExpCutoffConfig] = field(default_factory=ExpCutoffConfig)
+    envelope: Union[ExpCutoffConfig, XPLORCutoffConfig] = field(default_factory=ExpCutoffConfig)
     radius_transform: str = 'Identity'
 
     def build(self):
@@ -179,6 +195,15 @@ class InteractionConfig:
     message: Union[SevenNetConvConfig, SimpleMixMessageConfig, NodeFeatureMLPWeightedConfig] = (
         field(default_factory=SevenNetConvConfig)
     )
+    residual: bool = False
+
+    def build_inner(self):
+        raise NotImplementedError
+
+    def build(self):
+        mod = self.build_inner()
+        if self.residual:
+            return ResidualInteraction(irreps_out=None, interaction=mod)
 
 
 @dataclass
@@ -187,7 +212,7 @@ class SimpleInteractionBlockConfig(InteractionConfig):
     linear_intro: bool = True
     linear_outro: bool = True
 
-    def build(self) -> SimpleInteraction:
+    def build_inner(self) -> SimpleInteraction:
         return SimpleInteraction(
             irreps_out=None,
             conv=self.message.build(),
@@ -226,8 +251,24 @@ class LinearReadoutConfig(ReadoutConfig):
 
 
 @dataclass
+class IdentityReadoutConfig(ReadoutConfig):
+    kind: Const('identity') = 'identity'
+
+    def build(self) -> LinearAdapter:
+        return ResidualAdapter(irreps_out=None)
+
+
+@dataclass
 class SelfConnectionConfig:
     pass
+
+
+@dataclass
+class LinearSelfConnectionConfig(SelfConnectionConfig):
+    kind: Const('linear') = 'linear'
+
+    def build(self) -> LinearSelfConnection:
+        return LinearSelfConnection(irreps_out=None)
 
 
 @dataclass
@@ -293,6 +334,14 @@ class RescaleConfig:
 
 
 @dataclass
+class SevenNetRescaleConfig:
+    kind: Const('sevennet') = 'sevennet'
+
+    def build(self, metadata: DatasetMetadata) -> nn.Module:
+        return SevenNetRescale(metadata=metadata)
+
+
+@dataclass
 class SpeciesWiseRescaleConfig(RescaleConfig):
     kind: Const('species-wise') = 'species-wise'
     scale_trainable: bool = False
@@ -350,11 +399,15 @@ class MACEConfig:
     interaction: Union[SimpleInteractionBlockConfig] = field(
         default_factory=SimpleInteractionBlockConfig
     )
-    readout: Union[LinearReadoutConfig] = field(default_factory=LinearReadoutConfig)
-    self_connection: Union[S2MLPMixerConfig, MLPSelfGateConfig, GateConfig] = field(
-        default_factory=S2MLPMixerConfig
+    readout: Union[LinearReadoutConfig, IdentityReadoutConfig] = field(
+        default_factory=IdentityReadoutConfig
     )
-    rescale: Union[SpeciesWiseRescaleConfig] = field(default_factory=SpeciesWiseRescaleConfig)
+    self_connection: Union[
+        S2MLPMixerConfig, MLPSelfGateConfig, GateConfig, LinearSelfConnectionConfig
+    ] = field(default_factory=S2MLPMixerConfig)
+    rescale: Union[SpeciesWiseRescaleConfig, SevenNetRescaleConfig] = field(
+        default_factory=SpeciesWiseRescaleConfig
+    )
     head: MLPConfig = field(
         default_factory=lambda: MLPConfig(
             inner_dims=[],
@@ -370,6 +423,7 @@ class MACEConfig:
     outs_per_node: int = 64
     block_reduction: str = 'last'
     share_species_embed: bool = True
+    norm: str = 'identity'
 
     def build(
         self,
@@ -380,6 +434,11 @@ class MACEConfig:
             hidden_irreps = self.hidden_irreps.build()
         else:
             hidden_irreps = self.hidden_irreps
+
+        if self.norm == 'layer':
+            norm = E3LayerNorm(separation='scalars', scale_init=nn.initializers.ones)
+        elif self.norm == 'identity':
+            norm = None
 
         return MaceModel(
             hidden_irreps=hidden_irreps,
@@ -397,4 +456,5 @@ class MACEConfig:
             precision=precision,  # type: ignore
             resid_init=Layer(name=self.resid_init).build(),
             dataset_metadata=metadata,
+            norm=norm,
         )

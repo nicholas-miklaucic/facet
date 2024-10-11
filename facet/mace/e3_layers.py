@@ -144,7 +144,7 @@ class E3LayerNorm(nn.Module):
     separation: Literal['scalars', 'all-separate']
     scale_init: nn.initializers.Initializer = nn.ones
     learned_scale: bool = True
-    eps: float = 1e-3
+    eps: float = 1e-6
 
     @nn.compact
     def __call__(self, x: E3IrrepsArray, ctx: Context) -> E3IrrepsArray:
@@ -194,3 +194,10 @@ class E3LayerNorm(nn.Module):
 
         out = e3nn.from_chunks(x.irreps, out_chunks, leading_shape=x.shape[:-1])
         return out * learned_scale
+
+
+class E3SoftNorm(nn.Module):
+    @nn.compact
+    def __call__(self, x: E3IrrepsArray, ctx: Context):
+        norm = e3nn.norm(x).array
+        return x * (jnp.log1p(norm) / (norm + 1e-6))

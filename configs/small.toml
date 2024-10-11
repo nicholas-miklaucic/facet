@@ -1,4 +1,4 @@
-batch_size = 512
+batch_size = 64
 stack_size = 1
 num_epochs = 20
 precision = "f32"
@@ -28,11 +28,11 @@ epochs_per_valid = 0.5
 tags = []
 
 [model]
-outs_per_node = 64
+outs_per_node = 128
 
 [train.lr_schedule]
 kind = "polynomial"
-warmup_frac = 0.05
+warmup_frac = 0.1
 start_lr = 0.01
 end_lr = 0.5
 power = 1.0
@@ -61,14 +61,14 @@ stress_weight = 0
 inner_dims = []
 activation = "silu"
 final_activation = "Identity"
-dropout = 0.5
+dropout = 0.2
 residual = false
 num_heads = 1
 use_bias = false
 normalization = "layer"
 
 [model.node_embed]
-embed_dim = 64
+embed_dim = 128
 kind = "linear"
 
 [model.rescale]
@@ -80,7 +80,7 @@ global_shift_trainable = true
 
 [model.hidden_irreps]
 kind = "derived"
-dim = 384
+dim = 1024
 max_degree = 2
 gamma = 1
 num_layers = 2
@@ -91,14 +91,14 @@ loss_delta = 0.015625
 use_rmse = false
 
 [model.edge_embed]
-r_max = 8
+r_max = 6
 r_max_trainable = false
 
 [model.edge_embed.radial_basis]
 num_basis = 16
 kind = "gauss"
-mu_max = 8
-sd = 0.125
+mu_max = 5.8
+sd = 0.2
 mu_trainable = false
 sd_trainable = false
 
@@ -116,6 +116,12 @@ linear_outro = true
 kind = "sevennet-conv"
 max_ell = 3
 
+# [model.self_connection]
+# kind = 'linear'
+
+[model.self_connection]
+kind = "s2-mlp-mixer"
+
 [model.self_connection.s2_grid]
 activation = "silu"
 res_beta = 18
@@ -125,10 +131,10 @@ quadrature = "soft"
 use_fft = false
 
 [model.self_connection.mlp]
-inner_dims = [32]
+inner_dims = [64]
 activation = "silu"
 final_activation = "Identity"
-dropout = 0.3
+dropout = 0.2
 residual = false
 num_heads = 1
 use_bias = false

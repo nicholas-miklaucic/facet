@@ -233,9 +233,20 @@ class GaussianDropout(nn.Module):
 
 def shifted_softplus(x):
     """Shifted softplus activation used for SevenNet weight neural network.
-    Not sure why. Equal to softplus(x) - log 2"""
+    Goes through the origin."""
     return jax.nn.softplus(x) - jnp.log(2.0)
 
+
+def normalized_shifted_softplus(x):
+    """Normalized version of shifted_softplus, such that the mean squared output
+    for a random normal input is 1."""
+    return e3nn.normalize_function(shifted_softplus)(x)
+
+
+def normalized_silu(x):
+    """Normalized version of silu, such that the mean squared output
+    for a random normal input is 1."""
+    return e3nn.normalize_function(jax.nn.silu)(x)
 
 # def soft_envelope(length, max_length):
 #     return e3nn.soft_envelope(

@@ -85,8 +85,35 @@ class GaussBasis(RadialBasis):
         return y
 
 
-class BesselBasis(RadialBasis):
-    """Uses spherical Bessel functions with a cutoff, as in DimeNet++."""
+# class BesselBasis(RadialBasis):
+#     """Uses spherical Bessel functions with a cutoff, as in DimeNet++."""
+
+#     freq_trainable: bool = True
+
+#     def setup(self):
+#         self.freq = get_or_init(
+#             self, 'freq', jnp.arange(self.num_basis, dtype=jnp.float32) + 1, self.freq_trainable
+#         )
+
+#     def __call__(self, x, r_max, ctx: Context):
+#         dist = x[..., None] / r_max
+
+#         # e(d) = sqrt(2/c) * sin(fπd/c)/d
+#         # we use sinc so it's defined at 0
+#         # jnp.sinc is sin(πx)/(πx)
+#         # e(d) = sqrt(2/c) * sin(πfd/c)/(fd/c) * f/c
+#         # e(d) = sqrt(2/c) * sinc(πfd/c)) * πf/c
+
+#         # e_d = jnp.sqrt(2 / r_max) * jnp.sinc(self.freq * dist) * (jnp.pi * self.freq / r_max)
+#         e_d = 2 / r_max * jnp.sinc(self.freq * dist) * (jnp.pi * self.freq / r_max)
+
+#         # debug_stat(e_d=e_d, env=env, dist=dist)
+#         return e_d
+
+
+class SincBasis(RadialBasis):
+    """Uses spherical Bessel functions with a cutoff, as in DimeNet++.
+    Rewrites to use sinc, for hopefully better numerical performance."""
 
     freq_trainable: bool = True
 
@@ -96,7 +123,7 @@ class BesselBasis(RadialBasis):
         )
 
     def __call__(self, x, r_max, ctx: Context):
-        dist = x[..., None] / r_max
+        dist = x[..., None]
 
         # e(d) = sqrt(2/c) * sin(fπd/c)/d
         # we use sinc so it's defined at 0
@@ -104,10 +131,32 @@ class BesselBasis(RadialBasis):
         # e(d) = sqrt(2/c) * sin(πfd/c)/(fd/c) * f/c
         # e(d) = sqrt(2/c) * sinc(πfd/c)) * πf/c
 
-        e_d = jnp.sqrt(2 / r_max) * jnp.sinc(self.freq * dist) * (jnp.pi * self.freq / r_max)
+        # e_d = jnp.sqrt(2 / r_max) * jnp.sinc(self.freq * dist) * (jnp.pi * self.freq / r_max)        
+        e_d = 2 / r_max * jnp.sinc(self.freq / jnp.pi * dist) * self.freq
 
         # debug_stat(e_d=e_d, env=env, dist=dist)
         return e_d
+
+
+class BesselBasis(RadialBasis):
+    """
+    Uses spherical Bessel functions with a cutoff, as in DimeNet++.
+    This version is numerically unstable: it should be used mainly for compatibility with e.g.,
+    SevenNet checkpoints, which are trained to expect these oscillations.
+    """
+
+    freq_trainable: bool = True
+
+    def setup(self):
+        self.freq = get_or_init(
+            self, 'freq', jnp.arange(self.num_basis, dtype=jnp.float32) + 1, self.freq_trainable
+        )
+
+    def __call__(self, x, r_max, ctx: Context):
+        prefactor = 2.0 / r_max
+        dist = x[..., None]
+
+        return prefactor * jnp.sin(dist * self.freq) / dist
 
 
 class PolynomialCutoff(Envelope):
@@ -152,3 +201,28 @@ class ExpCutoff(Envelope):
         envelope = 1 - jnp.where(t < 0.5, exp_func(2 * t) / 2, 1 - exp_func(2 - 2 * t) / 2)
 
         return envelope
+
+
+# From SevenNet.
+class XPLORCutoff(Envelope):
+    """
+    https://hoomd-blue.readthedocs.io/en/latest/module-md-pair.html
+    """    
+
+    cutoff_on: float
+
+    @nn.compact
+    def __call__(self, r: Float[Array, '*batch'], r_max, ctx: Context) -> Float[Array, '*batch']:
+        r_sq = r * r
+        r_on = self.cutoff_on * r_max
+        r_on_sq = r_on * r_on
+        r_cut_sq = r_max * r_max
+        env_out = jnp.where(
+            r < r_on,
+            1.0,
+            (r_cut_sq - r_sq) ** 2
+            * (r_cut_sq + 2 * r_sq - 3 * r_on_sq)
+            / (r_cut_sq - r_on_sq) ** 3,
+        )
+
+        return jnp.where(r < r_max, env_out, 0)

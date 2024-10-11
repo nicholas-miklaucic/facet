@@ -175,13 +175,16 @@ class StatsVisitor(TreeVisitor):
             mu = np.nanmean(x)
             sd = np.nanstd(x)
             fmt = lambda s: f'{s:>8.3g}'
-            if (abs(mu) > 1000 or sd > 1000) or (1e-5 < abs(mu) < 1e-2 and 1e-5 < sd < 1e-2):
-                factor = round(np.log10(max(abs(mu), sd)))
-                x = x / 10**factor
-                lo = lo / 10**factor
-                hi = hi / 10**factor
-                summary += f' E{factor}'
-            else:
+            try:
+                if (abs(mu) > 1000 or sd > 1000) or (1e-5 < abs(mu) < 1e-2 and 1e-5 < sd < 1e-2):
+                    factor = round(np.log10(max(abs(mu), sd)))
+                    x = x / 10**factor
+                    lo = lo / 10**factor
+                    hi = hi / 10**factor
+                    summary += f' E{factor}'
+                else:
+                    factor = 0
+            except OverflowError:
                 factor = 0
             summary = f'{fmt(mu / 10 ** factor)} ± {fmt(sd / 10 ** factor)}' + summary
         else:

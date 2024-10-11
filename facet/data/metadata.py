@@ -9,6 +9,8 @@ a representation of that metadata to save and load from memory.
 from flax.struct import dataclass
 from jaxtyping import ArrayLike, Float, Array, Int, UInt
 import jax.numpy as jnp
+import numpy as np
+from pymatgen.core import Element
 
 from facet.utils import debug_structure
 
@@ -79,6 +81,12 @@ class DatasetMetadata:
             fp=self.r_max_quantile_k
             @ jnp.arange(0, self.r_max_quantile_k.shape[-1], dtype=self.r_max_quantile_k.dtype),
         )
+
+    @property
+    def symbols(self) -> np.array:
+        """Gets the atomic symbols in order, as an array of strings."""
+        return np.array([Element.from_Z(z).symbol if z != 0 else '0' for z in self.atomic_numbers])
+        
 
 
 if __name__ == '__main__':

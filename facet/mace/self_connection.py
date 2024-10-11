@@ -261,7 +261,7 @@ class GateSelfConnection(SelfConnectionBlock):
     @nn.nowrap
     def irreps_in(self) -> E3Irreps:
         non_scalars = self.ir_out.filter(drop=['0e', '0o']).num_irreps
-        return self.ir_out + E3Irreps(f'{non_scalars}x0e')
+        return (self.ir_out + E3Irreps(f'{non_scalars}x0e')).sort().irreps.simplify()
 
     @nn.compact
     def __call__(
@@ -274,7 +274,10 @@ class GateSelfConnection(SelfConnectionBlock):
         return e3nn.gate(
             node_feats,
             even_act=jax.nn.silu,
-            even_gate_act=jax.nn.sigmoid,
+            even_gate_act=jax.nn.silu,
+            odd_act=jnp.tanh,
+            odd_gate_act=jnp.tanh,
+            normalize_act=False,
         )
 
 

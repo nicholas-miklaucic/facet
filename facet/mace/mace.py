@@ -18,6 +18,7 @@ from facet.data.databatch import CrystalGraphs
 from facet.data.metadata import DatasetMetadata
 from facet.mace.e3_layers import (
     E3LayerNorm,
+    E3SoftNorm,
     IrrepsModule,
     Linear,
     LinearAdapter,
@@ -27,7 +28,7 @@ from facet.mace.e3_layers import (
 from facet.layers import SegmentReduction, SegmentReductionKind
 from facet.layers import Context, LazyInMLP, E3Irreps, E3IrrepsArray, edge_vecs
 from facet.mace.edge_embedding import RadialEmbeddingBlock
-from facet.mace.message_passing import SimpleInteraction
+from facet.mace.message_passing import ResidualInteraction, SimpleInteraction
 from facet.mace.node_embedding import NodeEmbedding
 from facet.mace.self_connection import (
     SelfConnectionBlock,
@@ -39,6 +40,27 @@ def safe_norm(x: jnp.ndarray, axis: int | None = None, keepdims=False) -> jnp.nd
     """nan-safe norm."""
     x2 = jnp.sum(x**2, axis=axis, keepdims=keepdims)
     return jnp.where(x2 == 0.0, 0.0, jnp.where(x2 == 0, 1.0, x2) ** 0.5)
+
+
+class SevenNetRescale(nn.Module):
+    metadata: DatasetMetadata
+
+    def setup(self):
+        self.scale = self.param('scale', nn.ones, (self.metadata.num_elements,))
+        self.shift = self.param('shift', nn.zeros, (self.metadata.num_elements,))
+        self.reduction = SegmentReduction('mean')
+
+    def __call__(self, cg: CrystalGraphs, energies: Float[Array, ' nodes'], ctx: Context):
+        # debug_structure(
+        #     energies=energies, species=node_species, scale=self.metadata.atomwise_scale_energy
+        # )
+        # print(jnp.unique(cg.nodes.species, return_counts=True))
+        energies = energies * self.scale[cg.nodes.species] + self.shift[cg.nodes.species]
+        graph_energies = self.reduction(energies, cg.nodes.graph_i, cg.n_total_graphs, ctx=ctx)
+        # debug_stat(scale=scale, shift=shift, energies=graph_energies)
+        scaled_outs = graph_energies
+
+        return scaled_outs[..., None]
 
 
 class SpeciesWiseRescale(nn.Module):
@@ -99,6 +121,7 @@ class MACELayer(nn.Module):
     readout: IrrepsModule | None
     residual: bool
     resid_init: Callable
+    norm: nn.Module | None
 
     @nn.compact
     def __call__(
@@ -116,16 +139,9 @@ class MACELayer(nn.Module):
         x = self.interaction(
             vectors, node_feats, radial_embedding, receivers, avg_num_neighbors, ctx=ctx
         )
+
         x = self.self_connection(x, node_species, species_embed, ctx)
-        # if '0e' not in x.irreps:
-        #     scalar_out = self.interaction.ir_out.filter('0e')
-        #     project_init = LinearAdapter(irreps_out=str(scalar_out), name='project_init')
-        #     projected = project_init(node_feats, ctx=ctx)
-        #     # debug_structure(projected=projected, x=x)
-        #     x = e3nn.concatenate(
-        #         [projected, x],
-        #         axis=-1,
-        #     )
+
         if self.residual:
             x = E3LayerNorm(
                 separation='scalars',
@@ -137,10 +153,12 @@ class MACELayer(nn.Module):
             resid = ResidualAdapter(x.irreps)(node_feats, ctx=ctx)
             x = x + resid
 
-        layer_norm = E3LayerNorm(
-            separation='scalars', scale_init=nn.initializers.ones, name='layer_norm'
-        )
-        x = layer_norm(x, ctx=ctx)
+        if self.norm is not None:
+            # norm_mod = E3LayerNorm(
+            #     separation='scalars', scale_init=nn.initializers.ones, name='layer_norm'
+            # )
+            norm_mod = self.norm.copy()
+            x = norm_mod(x, ctx=ctx)
 
         if self.readout is not None:
             readout = self.readout(x, ctx=ctx)
@@ -161,6 +179,7 @@ class MACE(IrrepsModule):
     residual: bool
     resid_init: Callable
     dataset_metadata: DatasetMetadata
+    norm: nn.Module | None
 
     def setup(self):
         layers = []
@@ -190,6 +209,7 @@ class MACE(IrrepsModule):
                     residual=self.residual,
                     resid_init=self.resid_init,
                     name=f'layer_{i}',
+                    norm=self.norm,
                 )
             )
 
@@ -217,12 +237,15 @@ class MACE(IrrepsModule):
         avg_num_neighbors = self.radial_embedding.avg_num_neighbors(self.dataset_metadata)
 
         # vector_shs = e3nn.spherical_harmonics(self.interaction_templ.conv.max_ell, vectors, True)
+        if isinstance(self.interaction_templ, ResidualInteraction):
+            interact = self.interaction_templ.interaction
+        else:
+            interact = self.interaction_templ
         vector_shs = e3nn.spherical_harmonics(
-            e3nn.Irreps(
-                ' + '.join([f'{ell}e' for ell in range(0, self.interaction_templ.conv.max_ell + 1)])
-            ),
+            e3nn.Irreps(' + '.join([f'{ell}e' for ell in range(0, interact.conv.max_ell + 1)])),
             vectors,
             normalize=True,
+            normalization='component'
         )
 
         outputs = []
@@ -259,6 +282,7 @@ class MaceModel(nn.Module):
     resid_init: Callable
     rescale: nn.Module
     dataset_metadata: DatasetMetadata
+    norm: nn.Module | None
 
     precision: Literal['f32', 'bf16']
     outs_per_node: int
@@ -282,9 +306,9 @@ class MaceModel(nn.Module):
             residual=self.residual,
             resid_init=self.resid_init,
             dataset_metadata=self.dataset_metadata,
+            norm=self.norm,
         )
 
-        self.norm = nn.LayerNorm()
         self.head = self.head_templ.copy(out_dim=1, name='head')
         self.dtype = jnp.float32 if self.precision == 'f32' else jnp.bfloat16
         self.head_dropout = nn.Dropout(self.head_templ.dropout_rate)
