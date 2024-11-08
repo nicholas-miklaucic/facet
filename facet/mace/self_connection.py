@@ -277,7 +277,7 @@ class GateSelfConnection(SelfConnectionBlock):
             even_gate_act=jax.nn.silu,
             odd_act=jnp.tanh,
             odd_gate_act=jnp.tanh,
-            normalize_act=False,
+            normalize_act=True,
         )
 
 

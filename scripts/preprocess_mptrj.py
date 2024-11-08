@@ -3,10 +3,18 @@
 from pathlib import Path
 import numpy as np
 from tqdm import tqdm
-from facet.data.dataset_generation import BatchMetadataTracker, BatchProcessor, ElementIndexer, GraphSummarizer, PrecomputedKNN, RMaxBinner, make_data_id_mptrj
+from facet.data.dataset_generation import (
+    BatchMetadataTracker,
+    BatchProcessor,
+    ElementIndexer,
+    GraphSummarizer,
+    PrecomputedKNN,
+    RMaxBinner,
+    make_data_id_mptrj,
+)
 
 data_folder = Path('precomputed') / 'mptrj'
-graphs_folder = Path('/home/nmiklaucic/mat-graph/crystallographic_graph/knns/')
+graphs_folder = Path('/home/nmiklaucic/mat-graph/crystallographic_graph/knns_mptrj/')
 
 processor = BatchProcessor(
     data_folder=data_folder,
@@ -18,9 +26,9 @@ processor = BatchProcessor(
     binner=RMaxBinner((np.arange(5, 121, 5) / 10).tolist()),
     tracker=BatchMetadataTracker(),
     num_batch=32,
-    k=16,
+    k=48,
     num_atoms=32,
-    energy_key='corrected_total_energy'
+    energy_key='corrected_total_energy',
 )
 
 
@@ -30,14 +38,14 @@ if __name__ == '__main__' or True:
     from rich.progress import track
     # if not Confirm.ask('Regenerate batched MP2022 files?'):
     #     raise RuntimeError('Aborted')
-    
-    batches = sorted((data_folder / 'raw').glob('batch_*.pkl'))    
+
+    batches = sorted((data_folder / 'raw').glob('batch_*.pkl'))
     names = [batch_fn.stem.removeprefix('batch_') for batch_fn in batches]
 
     # names = names[:1]
-        
+
     for name in names:
-        res = processor.process_batch(name, overwrite=True, max_batches=0)        
+        res = processor.process_batch(name, overwrite=True, max_batches=0)
         print(f'Finished {res}')
         gc.collect()
 

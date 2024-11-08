@@ -50,7 +50,7 @@ class EFSWrapper(PyTreeNode):
                 cg.nodes.cart, cg.graph_data.lat
             )
         else:
-            energy_sum, energy = energy_fn(cg.nodes.cart, cg.graph_data.lat)
+            _energy_sum, energy = energy_fn(cg.nodes.cart, cg.graph_data.lat)
             fgrad = cg.nodes.cart * 0
             sgrad = cg.graph_data.lat * 0
 

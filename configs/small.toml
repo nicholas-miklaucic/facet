@@ -1,4 +1,4 @@
-batch_size = 64
+batch_size = 128
 stack_size = 1
 num_epochs = 20
 precision = "f32"
@@ -7,7 +7,7 @@ do_profile = false
 display = "progress"
 
 [data]
-dataset_name = "mp2022"
+dataset_name = "mptrj"
 raw_data_folder = "data"
 data_folder = "precomputed"
 shuffle_seed = 29205
@@ -28,7 +28,12 @@ epochs_per_valid = 0.5
 tags = []
 
 [model]
-outs_per_node = 128
+outs_per_node = 64
+
+[train]
+max_grad_norm = 1.0
+ema_gamma = 0.99
+steps_between_ema = 16
 
 [train.lr_schedule]
 kind = "polynomial"
@@ -68,7 +73,7 @@ use_bias = false
 normalization = "layer"
 
 [model.node_embed]
-embed_dim = 128
+embed_dim = 64
 kind = "linear"
 
 [model.rescale]
@@ -80,7 +85,7 @@ global_shift_trainable = true
 
 [model.hidden_irreps]
 kind = "derived"
-dim = 1024
+dim = 512
 max_degree = 2
 gamma = 1
 num_layers = 2
@@ -95,12 +100,10 @@ r_max = 6
 r_max_trainable = false
 
 [model.edge_embed.radial_basis]
-num_basis = 16
-kind = "gauss"
-mu_max = 5.8
-sd = 0.2
-mu_trainable = false
-sd_trainable = false
+num_basis = 10
+kind = "bessel"
+freq_trainable = true
+use_sinc = true
 
 [model.edge_embed.envelope]
 kind = "exp"
@@ -109,6 +112,7 @@ c = 0.1
 
 [model.interaction]
 kind = 'simple'
+residual = true
 linear_intro = false
 linear_outro = true
 
@@ -131,12 +135,12 @@ quadrature = "soft"
 use_fft = false
 
 [model.self_connection.mlp]
-inner_dims = [64]
+inner_dims = [16]
 activation = "silu"
-final_activation = "Identity"
+final_activation = "silu"
 dropout = 0.2
 residual = false
-num_heads = 1
+num_heads = 2
 use_bias = false
 normalization = "layer"
 

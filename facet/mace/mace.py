@@ -229,7 +229,7 @@ class MACE(IrrepsModule):
         species_embs = node_feats
 
         if not (hasattr(vectors, 'irreps') and hasattr(vectors, 'array')):
-            vectors = E3IrrepsArray('1e', vectors)
+            vectors = E3IrrepsArray('1e', -vectors)
 
         radial_embedding = self.radial_embedding(safe_norm(vectors.array, axis=-1), ctx=ctx)
         radial_embedding = radial_embedding.astype(vectors.dtype)
@@ -245,8 +245,8 @@ class MACE(IrrepsModule):
             e3nn.Irreps(' + '.join([f'{ell}e' for ell in range(0, interact.conv.max_ell + 1)])),
             vectors,
             normalize=True,
-            normalization='component'
-        )
+            normalization='component',
+        ).transform_by_matrix(jnp.array([[0, 0, 1], [0, 1, 0], [1, 0, 0]]))
 
         outputs = []
         for i, layer in enumerate(self.layers):

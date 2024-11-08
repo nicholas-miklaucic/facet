@@ -20,6 +20,7 @@ import pyrallis
 
 from facet.config import MainConfig
 
+from facet.data.databatch import CrystalGraphs
 from facet.utils import StatsVisitor, StructureVisitor, tree_traverse
 from facet.data.dataset import load_file
 from facet.layers import Context
@@ -189,7 +190,11 @@ class FlowRecorder:
 
 
 def visualize_model_flow(
-    config: MainConfig, params: dict | None = None, is_dark: bool = False, return_html: bool = True
+    config: MainConfig,
+    params: dict | None = None,
+    is_dark: bool = False,
+    return_html: bool = True,
+    cg: CrystalGraphs | None = None,
 ):
     theme, cs = rp.mpl_setup(is_dark)
     rp.plotly_setup(is_dark)
@@ -202,7 +207,8 @@ def visualize_model_flow(
 
     model = config.build_regressor()
 
-    cg = load_file(config)
+    if cg is None:
+        cg = load_file(config)
 
     if params is None:
         out, params = model.init_with_output(jr.key(29205), cg=cg, ctx=Context(training=True))
@@ -243,11 +249,12 @@ def visualize_model_flow(
                 axis_labels[i] = 'species'
                 axis_item_labels[i] = symbols
                 arr = jnp.take(arr, symbol_perm, axis=i)
-            elif size == (config.data.batch_n_nodes or md.batch_num_atoms):
+            elif size == (config.data.batch_n_nodes or md.batch_num_atoms * md.batch_num_graphs):
                 node_mask = cg.padding_mask[cg.nodes.graph_i]
                 new_shape = (
                     [1 for _ in range(i)] + [size] + [1 for _ in range(i + 1, len(arr.shape))]
                 )
+                # print(new_shape, node_mask, size)
                 kwargs['valid_mask'] = node_mask.reshape(*new_shape)
 
         kwargs['axis_item_labels'] = axis_item_labels

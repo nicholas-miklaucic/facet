@@ -443,6 +443,7 @@ class ProdigyConfig(OptimizerConfig):
         tx = optax.contrib.prodigy(
             learning_rate,
             betas=(self.beta_1, self.beta_2),
+            eps=1e-4,
             weight_decay=self.weight_decay,
             estim_lr_coef=self.base_lr,
             safeguard_warmup=True,

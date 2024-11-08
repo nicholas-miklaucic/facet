@@ -332,7 +332,20 @@ class TrainingRun:
                     params=best_ckpt(self.config.restart_from)['state']['params']
                 )
             elif self.config.checkpoint_params is not None:
-                self.state = self.state.replace(params=load_pytree(self.config.checkpoint_params))
+                ckpt_params = load_pytree(self.config.checkpoint_params)
+
+                flattened, _ = jax.tree_util.tree_flatten_with_path(ckpt_params)
+
+                def replace(kp, x):
+                    for kp2, new_x in flattened:
+                        if kp == kp2:
+                            return new_x
+                    logging.info(f'{jax.tree_util.keystr(kp)} not in checkpoint')
+                    return x
+
+                self.state = self.state.replace(
+                    params=jax.tree_util.tree_map_with_path(replace, self.state.params)
+                )
 
             # log number of parameters
             self.run['params'] = int(

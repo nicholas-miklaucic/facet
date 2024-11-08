@@ -77,14 +77,19 @@ class CrystalGraphs(struct.PyTreeNode):
 
     nodes: NodeData
     edges: EdgeData
-    n_node: Int[Array, 'graphs']
-    padding_mask: Bool[Array, 'graphs']
+    n_node: Int[Array, ' graphs']
+    padding_mask: Bool[Array, ' graphs']
     graph_data: CrystalData
     target_data: TargetInfo
 
     @property
     def receivers(self) -> Int[Array, 'nodes k']:
         return self.edges.receiver
+
+    @property
+    def node_pad(self) -> Bool[Array, ' nodes']:
+        """Indicates whether a node is part of the padding or not."""
+        return self.padding_mask[self.nodes.graph_i]
 
     @property
     def globals(self):
@@ -112,7 +117,7 @@ class CrystalGraphs(struct.PyTreeNode):
         return jnp.einsum('bij,bkj->bik', self.graph_data.lat, self.graph_data.lat)
 
     @property
-    def e_form(self) -> Float[Array, 'graphs']:
+    def e_form(self) -> Float[Array, ' graphs']:
         return self.target_data.e_form
 
     def __add__(self, other: 'CrystalGraphs') -> 'CrystalGraphs':
@@ -154,6 +159,14 @@ class CrystalGraphs(struct.PyTreeNode):
                 (np.array([nodes], dtype=np.uint16), empty([graphs - 1], np.uint16))
             ),
             padding_mask=empty(graphs, dtype=np.bool_),
+        )
+
+    def trim_k(self, k: int) -> 'CrystalGraphs':
+        """Truncates the edges, keeping only the closest k for each node."""
+        return self.replace(
+            edges=self.edges.replace(
+                to_jimage=self.edges.to_jimage[..., :k, :], receiver=self.edges.receiver[..., :k]
+            )
         )
 
     def rotate(self, seed: int) -> tuple['CrystalGraphs', Float[Array, 'n_graph 3 3']]:

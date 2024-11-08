@@ -1,30 +1,30 @@
 batch_size = 32
 stack_size = 1
-num_epochs = 12
+num_epochs = 2
 precision = "f32"
 debug_mode = false
 do_profile = false
 display = "progress"
-checkpoint_params = "precomputed/sevennet.ckpt"
+checkpoint_params = "precomputed/sevennet-trimmed.ckpt"
 
 [data]
 dataset_name = "mptrj"
 raw_data_folder = "data"
 data_folder = "precomputed"
 shuffle_seed = 1618
-train_split = 30
-test_split = 3
+train_split = 27
+test_split = 6
 valid_split = 3
 batches_per_group = 0
 
 [log]
-logs_per_epoch = 16
+logs_per_epoch = 32
 epochs_per_ckpt = 5
-epochs_per_valid = 0.5
+epochs_per_valid = 2.0
 
 [train]
-base_lr = 1.0
-max_grad_norm = 3.0
+base_lr = 1e-5
+max_grad_norm = 0.1
 ema_gamma = 0.99
 steps_between_ema = 16
 
@@ -43,20 +43,19 @@ hidden_irreps = [
 
 [train.loss]
 energy_weight = 1
-force_weight = 1
+force_weight = 0
 stress_weight = 0
 
 [train.lr_schedule]
 kind = "polynomial"
-warmup_frac = 0.1
+warmup_frac = 0.5
 start_lr = 0.01
 end_lr = 0.01
 power = 1.0
 
 [train.optimizer]
-base_lr = 1
-kind = "prodigy"
-weight_decay = 1e-8
+kind = "adamw"
+weight_decay = 1e-3
 beta_1 = 0.9
 beta_2 = 0.99
 
@@ -66,7 +65,7 @@ kind = "linear"
 
 [model.edge_embed]
 r_max = 5.0
-r_max_trainable = false
+r_max_trainable = true
 radius_transform = "Identity"
 
 [model.interaction]
@@ -100,7 +99,7 @@ loss_delta = 0.015625
 use_rmse = false
 
 [model.edge_embed.radial_basis]
-num_basis = 8
+num_basis = 10
 kind = "bessel"
 freq_trainable = true
 use_sinc = true
@@ -114,7 +113,7 @@ kind = "sevennet-conv"
 max_ell = 2
 
 [model.interaction.message.radial_weight]
-inner_dims = [64, 64]
+inner_dims = []
 activation = "normalized_silu"
 final_activation = "Identity"
 out_dim = 0

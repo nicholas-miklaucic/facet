@@ -48,7 +48,9 @@ def load_file(config: 'MainConfig', group_num=0, file_num=0) -> CrystalGraphs:
     """Loads a file. Lacks the complex data loader logic, but easier to use for testing."""
     cg: CrystalGraphs = process_raw(load_raw(config, group_num, file_num))
 
-    return cg
+    k = cg.edges.receiver.shape[-1] if config.data.k is None else config.data.k
+
+    return cg.trim_k(k)
 
 
 def set_path(data, path, value):

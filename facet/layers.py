@@ -46,6 +46,11 @@ def edge_vecs(cg):
     return vecs
 
 
+def dists(cg):
+    """CG -> nodes k"""
+    return jnp.linalg.norm(edge_vecs(cg), axis=-1)
+
+
 class Context(struct.PyTreeNode):
     training: bool
 
@@ -247,6 +252,7 @@ def normalized_silu(x):
     """Normalized version of silu, such that the mean squared output
     for a random normal input is 1."""
     return e3nn.normalize_function(jax.nn.silu)(x)
+
 
 # def soft_envelope(length, max_length):
 #     return e3nn.soft_envelope(
