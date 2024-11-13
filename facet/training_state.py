@@ -72,7 +72,7 @@ def create_train_state(module: nn.Module, optimizer, rng, batch: CrystalGraphs):
         params=params,
         tx=tx,
         metrics=Metrics(),
-        last_grad_norm=0,
+        last_grad_norm=0.0,
     )
 
 
@@ -370,7 +370,11 @@ class TrainingRun:
 
         self.state, preds = self.train_step(state=self.state, **kwargs)  # type: ignore
         # jax.debug.visualize_array_sharding(preds[..., 0])
-        metric_updates = self.compute_metrics(preds=preds, state=self.eval_state, **kwargs)
+
+        # instead of unpacking kwargs, we specify order of kwargs so that jax doesn't compile this twice
+        metric_updates = self.compute_metrics(
+            config=self.config.train.loss, state=self.eval_state, batch=batch, preds=preds
+        )
         self.state = update_metrics(self.state, metric_updates)
 
         if self.should_log or self.should_ckpt or self.should_validate:
@@ -444,6 +448,7 @@ class TrainingRun:
                     self.rng,
                 )
 
+                # order of updates matters here: JAX recompiles if they differ
                 metric_updates = self.compute_metrics(
                     config=self.config.train.loss,
                     state=test_state,
