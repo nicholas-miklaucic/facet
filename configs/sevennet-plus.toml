@@ -1,6 +1,6 @@
 batch_size = 32
 stack_size = 1
-num_epochs = 3
+num_epochs = 5
 precision = "f32"
 debug_mode = false
 do_profile = false
@@ -15,8 +15,8 @@ shuffle_seed = 1618
 train_split = 30
 test_split = 3
 valid_split = 3
-batches_per_group = 0
 k = 32
+batches_per_group = 1500
 
 [log]
 logs_per_epoch = 32
@@ -24,9 +24,9 @@ epochs_per_ckpt = 2
 epochs_per_valid = 0.5
 
 [train]
-base_lr = 1e-5
-max_grad_norm = 0.1
-ema_gamma = 0.99
+base_lr = 1e-4
+max_grad_norm = 0.3
+ema_gamma = 0.995
 steps_between_ema = 16
 
 [model]
@@ -43,13 +43,13 @@ hidden_irreps = [
 ]
 
 [train.loss]
-energy_weight = 1
-force_weight = 0
+energy_weight = 0.1
+force_weight = 1
 stress_weight = 0
 
 [train.lr_schedule]
 kind = "polynomial"
-warmup_frac = 0.5
+warmup_frac = 0.2
 start_lr = 0.01
 end_lr = 0.01
 power = 1.0
@@ -66,7 +66,7 @@ kind = "linear"
 
 [model.edge_embed]
 r_max = 5.0
-r_max_trainable = true
+r_max_trainable = false
 radius_transform = "Identity"
 
 [model.interaction]
@@ -107,15 +107,16 @@ inner_dims = [64]
 activation = "Identity"
 final_activation = "Identity"
 out_dim = 0
-dropout = 0.0
+dropout = 0.2
 residual = false
 num_heads = 1
 use_bias = false
 normalization = "Identity"
 
 [train.loss.reg_loss]
-loss_delta = 0.015625
+loss_delta = 0
 use_rmse = false
+
 
 [model.edge_embed.radial_basis]
 num_basis = 10

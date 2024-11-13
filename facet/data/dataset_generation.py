@@ -171,6 +171,30 @@ def make_data_id_mptrj(df):
     return data_id
 
 
+def parse_data_id_mptrj(did):
+    if did == 0:
+        return '0'
+
+    rep = np.binary_repr(did, width=32)
+
+    for length in range(8):
+        candidates = []
+        for pref in range(int(2 ** (length - 1)), int(2**length)):
+            pref_rep = np.binary_repr(pref)
+            full_id = str(int(pref_rep + rep, base=2))
+            first = full_id[0]
+            last = full_id[-3:]
+            if first in '12':
+                candidates.append((last, full_id[:-3], pref_rep))
+
+        if candidates:
+            last, mpid, _pref = min(candidates)
+            step, calc = int(last) // 2, int(last) % 2
+            return {'1': 'mp-', '2': 'mvc-'}[mpid[0]] + mpid[1:] + f'-{calc}-{step}'
+
+    return 'NA'
+
+
 class ElementIndexer:
     """Assigns elements to indices in order of appearance."""
 

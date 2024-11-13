@@ -150,24 +150,50 @@ class RegressionLossConfig:
         between L2 and L1 loss, with loss_delta only controlling how sharp the higher-order
         derivatives are and how quickly the bound becomes tight.
 
+        If loss_delta = 0, this is simply L1 loss. If loss_delta = inf, this is simply RMSE loss. Both
+        are special-cased to avoid numerical issues, so differentiating them w.r.t loss_delta won't work.
+
         https://www.desmos.com/calculator/ntiznoeea8
         """
-        a = -5 / 2 / 8
-        b = 63 / 8 / 6
-        c = -35 / 4 / 4
-        d = 35 / 8 / 2
-        x = (preds - targets) / self.loss_delta
-        x2 = x * x
-        x_abs = jnp.abs(x)
-        y = jnp.where(x_abs < 1, x2 * d + (x2 * c + (x2 * b + (x2 * a))), x_abs)
-        return y * self.loss_delta
+        if self.loss_delta == 0:
+            return jnp.square(preds - targets)
+        elif self.loss_delta == np.inf:
+            return jnp.abs(preds - targets)
+        else:
+            a = -5 / 2 / 8
+            b = 63 / 8 / 6
+            c = -35 / 4 / 4
+            d = 35 / 8 / 2
+            x = (preds - targets) / self.loss_delta
+            x2 = x * x
+            x_abs = jnp.abs(x)
+            y = jnp.where(x_abs < 1, x2 * d + (x2 * c + (x2 * b + (x2 * a))), x_abs)
+            return y * self.loss_delta
 
     def regression_loss(self, preds, targets, mask):
+        """
+        Computes a "smoother L1 loss" function with these properties:
+
+         - f(e) = MAE(e) for e > self.loss_delta
+         - f(0) = 0
+         - MSE(e) <= f(e) <= MAE(e) for all e
+         - f and its first three derivatives are continuous everywhere
+
+        Importantly, unlike Huber loss, there's no scaling factor to consider: f(e) is always
+        between L2 and L1 loss, with loss_delta only controlling how sharp the higher-order
+        derivatives are and how quickly the bound becomes tight.
+
+        If loss_delta = 0, this is simply L1 loss. If loss_delta = inf, this is simply L2 loss. Both
+        are special-cased to avoid numerical issues, so differentiating them w.r.t loss_delta won't work.
+
+        https://www.desmos.com/calculator/ntiznoeea8
+        """
         if preds.shape != targets.shape:
             msg = f'Incorrect input shapes: {preds.shape} != {targets.shape}'
             raise ValueError(msg)
         if preds.ndim == 2:
             mask = mask[:, None]
+
         if self.use_rmse:
             return jnp.sqrt(optax.losses.squared_error(preds, targets).mean(where=mask))
         else:
@@ -554,6 +580,7 @@ class MainConfig:
         from jax.experimental.compilation_cache.compilation_cache import set_cache_dir
 
         set_cache_dir('/tmp/jax_comp_cache')
+        jax.config.update('jax_explain_cache_misses', True)
 
     @property
     def train_batch_multiple(self) -> int:
