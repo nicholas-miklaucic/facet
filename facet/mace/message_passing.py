@@ -142,7 +142,7 @@ class SevenNetConv(MPConv):
             irreps_in2=edge_sh.irreps,
             irreps_out=irreps_after_tp,
             instructions=sorted_instructions,
-        )        
+        )
 
         # scalar radial network, number of output neurons is the total number of
         # tensor product paths, nonlinearity must have f(0)=0 and MLP must not
@@ -166,15 +166,23 @@ class SevenNetConv(MPConv):
         fc: LazyInMLP = self.radial_weight.copy(out_dim=n_tp_weights)
 
         # the TP weights (v dimension) are given by the FC
-        weight = fc(radial_embedding, ctx=ctx)
+        weight = fc(radial_embedding, ctx=ctx).astype(jnp.bfloat16)
 
         # debug_structure(weight=weight, edge_features=edge_features, sh=edge_sh)
 
         # tp between node features that have been mapped onto edges and edge RSH
         # weighted by FC weight, we vmap over the dimension of the edges
-        edge_features = e3nn.vmap(e3nn.vmap(tp.left_right, in_axes=(0, None, 0)))(
-            weight.array, edge_features, edge_sh
-        )
+        edge_features = e3nn.vmap(
+            e3nn.vmap(
+                ft.partial(
+                    tp.left_right,
+                    custom_einsum_jvp=True,
+                    fused=False,
+                    sparse=False,
+                ),
+                in_axes=(0, None, 0),
+            )
+        )(weight.array, edge_features, edge_sh)
         # TODO: It's not great that e3nn_jax automatically upcasts internally,
         # but this would need to be fixed at the e3nn level.
         edge_features = jax.tree.map(lambda x: x.astype(node_feats.dtype), edge_features)

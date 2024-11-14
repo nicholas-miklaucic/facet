@@ -1,3 +1,4 @@
+import chex
 from facet.train_e_form import MainConfig, run_using_dashboard
 from pyrallis import cfgparsing
 from time import monotonic
@@ -21,7 +22,7 @@ if __name__ == '__main__':
     run = TrainingRun(conf)
 
     # jit compile and warm up
-    for run_state, i in zip(run.step_until_done(), range(2)):
+    for run_state, i in zip(run.step_until_done(), range(3)):
         continue
 
     # memory profiling
@@ -33,9 +34,10 @@ if __name__ == '__main__':
     # tensorboard profiling
     max_step = run.steps_in_epoch // 4
     for i, batch in zip(range(max_step + 1), run.dl):
-        if i == max_step - 1:
-            jax.profiler.start_trace('/tmp/tensorboard2')
+        if i == max_step:
+            jax.profiler.start_trace('/tmp/tensorboard')
 
+        chex.clear_trace_counter()
         run_state = run_state.step(i, batch)
 
     jax.block_until_ready(run_state.state.params)

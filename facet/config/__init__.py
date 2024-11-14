@@ -288,8 +288,9 @@ class LossConfig:
 
     @property
     def efs_wrapper(self) -> EFSWrapper:
-        compute_fs = not (self.force_weight == 0 and self.stress_weight == 0)
-        return EFSWrapper(compute_fs=compute_fs)
+        return EFSWrapper(
+            compute_forces=self.force_weight == 0, compute_stress=self.stress_weight == 0
+        )
 
     @property
     def efs_loss(self) -> EFSLoss:

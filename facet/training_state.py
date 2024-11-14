@@ -54,7 +54,7 @@ class Metrics:
 
 class TrainState(train_state.TrainState):
     metrics: Metrics
-    last_grad_norm: float
+    last_grad_norm: jax.Array
 
     def replicate_params(self, devices: set[jax.Device]):
         return jax.device_put_replicated(self.params, tuple(devices))
@@ -64,7 +64,9 @@ def create_train_state(module: nn.Module, optimizer, rng, batch: CrystalGraphs):
     b1 = jax.tree_map(lambda x: x[0], batch)
     # debug_structure(b1=b1)
     # jax.debug.visualize_array_sharding(b1.e_form)
-    loss, params = module.init_with_output(rng, b1, ctx=Context(training=False))
+    loss, params = module.init_with_output(
+        {k: jax.random.key(v) for k, v in rng.items()}, b1, ctx=Context(training=False)
+    )
     # jax.debug.visualize_array_sharding(loss)
     tx = optimizer
     return TrainState.create(
@@ -72,7 +74,7 @@ def create_train_state(module: nn.Module, optimizer, rng, batch: CrystalGraphs):
         params=params,
         tx=tx,
         metrics=Metrics(),
-        last_grad_norm=0.0,
+        last_grad_norm=jnp.array(0.0, dtype=jnp.float32),
     )
 
 
@@ -95,7 +97,7 @@ def update_metrics(state: TrainState, metric_updates) -> TrainState:
 class TrainingRun:
     def __init__(self, config: MainConfig):
         self.seed = random.randint(100, 1000)
-        self.rng = {'params': jax.random.key(self.seed)}
+        self.rng = {'params': self.seed}
         logging.info(f'Seed: {self.seed}')
         self.config = config
 
@@ -156,9 +158,8 @@ class TrainingRun:
 
     @staticmethod
     @ft.partial(jax.jit, static_argnames=('config',))
-    @chex.assert_max_traces(5)
+    @chex.assert_max_traces(2)
     def compute_metrics(
-        *,
         config: LossConfig,
         state: TrainState,
         batch: CrystalGraphs,
@@ -173,11 +174,9 @@ class TrainingRun:
 
     @staticmethod
     @ft.partial(jax.jit, static_argnames=('config',))
-    @chex.assert_max_traces(5)
+    @chex.assert_max_traces(2)
     def test_preds(config: LossConfig, state: TrainState, params, batch: CrystalGraphs, rng):
         """Evaluate metrics for a single batch."""
-        rngs = {k: v for k, v in rng.items()} if isinstance(rng, dict) else {'params': rng}
-        rng = jax.random.fold_in(rngs['params'], state.step)
 
         from jax.experimental import mesh_utils
         from jax.experimental.shard_map import shard_map
@@ -189,7 +188,7 @@ class TrainingRun:
         @ft.partial(jax.vmap, in_axes=(None, 0))
         def loss_fn(params, batch):
             preds = config.efs_wrapper(
-                state.apply_fn, params, batch, ctx=Context(training=True), rngs=rng
+                state.apply_fn, params, batch, ctx=Context(training=True), rngs=rng['params']
             )
             loss = config.efs_loss(batch, preds)
             return loss
@@ -211,12 +210,9 @@ class TrainingRun:
 
     @staticmethod
     @ft.partial(jax.jit, static_argnames=('config',))
-    @chex.assert_max_traces(5)
+    @chex.assert_max_traces(2)
     def train_grads(config: LossConfig, state: TrainState, params, batch: CrystalGraphs, rng):
         """Train for a single step."""
-        rngs = {k: v for k, v in rng.items()} if isinstance(rng, dict) else {'params': rng}
-        rng = jax.random.fold_in(rngs['params'], state.step)
-
         from jax.experimental import mesh_utils
         from jax.experimental.shard_map import shard_map
         from jax.sharding import Mesh, PartitionSpec as P
@@ -226,7 +222,7 @@ class TrainingRun:
 
         def loss_fn(params, batch):
             preds = config.efs_wrapper(
-                state.apply_fn, params, batch, ctx=Context(training=True), rngs=rng
+                state.apply_fn, params, batch, ctx=Context(training=True), rngs=rng['params']
             )
             loss = config.efs_loss(batch, preds)
             return loss['loss'].mean(), loss
@@ -258,7 +254,7 @@ class TrainingRun:
 
     @staticmethod
     @ft.partial(jax.jit)
-    @chex.assert_max_traces(5)
+    @chex.assert_max_traces(2)
     def update_train_state(state: TrainState, grads) -> TrainState:
         # grads = jax.tree_map(lambda x: x.mean(axis=0), grads)
         grad_norm = optax.global_norm(grads)
@@ -270,6 +266,7 @@ class TrainingRun:
         """Train for a single step."""
         # debug_structure(state.params)
         # debug_structure(batch)
+        rng = {k: jax.random.key(v + state.step % 2**16) for k, v in rng.items()}
         grads, preds = TrainingRun.train_grads(config, state, state.params, batch, rng)
         # debug_structure(grads=grads, preds=preds)
         # print('params')
@@ -373,7 +370,7 @@ class TrainingRun:
 
         # instead of unpacking kwargs, we specify order of kwargs so that jax doesn't compile this twice
         metric_updates = self.compute_metrics(
-            config=self.config.train.loss, state=self.eval_state, batch=batch, preds=preds
+            self.config.train.loss, self.eval_state, batch, preds, None
         )
         self.state = update_metrics(self.state, metric_updates)
 
@@ -445,15 +442,12 @@ class TrainingRun:
                     test_state,
                     test_state.params,
                     test_batch,
-                    self.rng,
+                    {k: jax.random.key(v) for k, v in self.rng.items()},
                 )
 
                 # order of updates matters here: JAX recompiles if they differ
                 metric_updates = self.compute_metrics(
-                    config=self.config.train.loss,
-                    state=test_state,
-                    batch=test_batch,
-                    preds=test_preds,
+                    self.config.train.loss, test_state, test_batch, test_preds, None
                 )
 
                 test_state = update_metrics(test_state, metric_updates)

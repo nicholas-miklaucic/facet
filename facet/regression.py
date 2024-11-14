@@ -26,7 +26,8 @@ class EFSOutput(PyTreeNode):
 
 
 class EFSWrapper(PyTreeNode):
-    compute_fs: bool = True
+    compute_forces: bool
+    compute_stress: bool
 
     def __call__(
         self, apply_fn: Callable, variables, cg: CrystalGraphs, *args, **kwargs
@@ -45,17 +46,32 @@ class EFSWrapper(PyTreeNode):
             )
             return jnp.sum(energy, where=cg.padding_mask), energy
 
-        if self.compute_fs:
-            (fgrad, sgrad), energy = jax.grad(energy_fn, argnums=(0, 1), has_aux=True)(
+        argnums = []
+        if self.compute_forces:
+            argnums.append(0)
+        if self.compute_stress:
+            argnums.append(1)
+
+        if argnums:
+            grads, energy = jax.grad(energy_fn, argnums=argnums, has_aux=True)(
                 cg.nodes.cart, cg.graph_data.lat
             )
         else:
             _energy_sum, energy = energy_fn(cg.nodes.cart, cg.graph_data.lat)
-            fgrad = cg.nodes.cart * 0
-            sgrad = cg.graph_data.lat * 0
+
+        if self.compute_forces:
+            fgrad = grads[0]
+        else:
+            fgrad = jnp.zeros_like(cg.nodes.cart)
+
+        if self.compute_stress:
+            sgrad = grads[-1]
+        else:
+            sgrad = jnp.zeros_like(cg.graph_data.lat)
 
         # https://github.com/MDIL-SNU/SevenNet/blob/afb56e10b6a27190f7c3ce25cbf666cf9175608e/sevenn/nn/force_output.py#L72
         # https://github.com/ACEsuit/mace/blob/575af0171369e2c19e04b115140b9901f83eb00c/mace/modules/utils.py#L60
+
         force = -fgrad
 
         volume = jax.vmap(
@@ -65,7 +81,7 @@ class EFSWrapper(PyTreeNode):
         stress = jnp.where(
             volume == 0, -sgrad, -sgrad / jnp.where(volume == 0, jnp.ones_like(volume), volume)
         )
-        stress = sgrad * 0.1  # convert to GPa?
+        stress = sgrad * 0.1  # convert to GPa
 
         return EFSOutput(energy=energy, force=force, stress=stress)
 
