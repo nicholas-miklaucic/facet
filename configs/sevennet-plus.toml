@@ -1,4 +1,4 @@
-batch_size = 64
+batch_size = 32
 stack_size = 1
 num_epochs = 5
 precision = "f32"
@@ -16,7 +16,7 @@ train_split = 30
 test_split = 3
 valid_split = 3
 k = 32
-batches_per_group = 1500
+batches_per_group = 1000
 
 [log]
 logs_per_epoch = 32
@@ -56,7 +56,7 @@ power = 1.0
 
 [train.optimizer]
 kind = "adamw"
-weight_decay = 1e-3
+weight_decay = 1e-2
 beta_1 = 0.9
 beta_2 = 0.999
 
@@ -93,7 +93,7 @@ use_fft = false
 inner_dims = [16]
 activation = "swish"
 final_activation = "Identity"
-dropout = 0.2
+dropout = 0.0
 residual = false
 num_heads = 2
 use_bias = false
@@ -107,7 +107,7 @@ inner_dims = [64]
 activation = "Identity"
 final_activation = "Identity"
 out_dim = 0
-dropout = 0.2
+dropout = 0
 residual = false
 num_heads = 1
 use_bias = false

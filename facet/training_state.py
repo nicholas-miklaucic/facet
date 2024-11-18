@@ -188,7 +188,7 @@ class TrainingRun:
         @ft.partial(jax.vmap, in_axes=(None, 0))
         def loss_fn(params, batch):
             preds = config.efs_wrapper(
-                state.apply_fn, params, batch, ctx=Context(training=True), rngs=rng['params']
+                state.apply_fn, params, batch, ctx=Context(training=False), rngs=rng['params']
             )
             loss = config.efs_loss(batch, preds)
             return loss
@@ -266,7 +266,7 @@ class TrainingRun:
         """Train for a single step."""
         # debug_structure(state.params)
         # debug_structure(batch)
-        rng = {k: jax.random.key(v + state.step % 2**16) for k, v in rng.items()}
+        rng = {k: jax.random.key((v + state.step) % 2**16) for k, v in rng.items()}
         grads, preds = TrainingRun.train_grads(config, state, state.params, batch, rng)
         # debug_structure(grads=grads, preds=preds)
         # print('params')
@@ -354,7 +354,7 @@ class TrainingRun:
             for path in self.config.log.log_params:
                 param = get_nested_path(self.state.params['params'], path)
                 if param is None:
-                    logging.warn(f'Could not find parameter {path}')
+                    logging.warning(f'Could not find parameter {path}')
                     # debug_structure(params=self.state.params['params'])
         elif step >= self.num_steps:
             return None
@@ -435,14 +435,17 @@ class TrainingRun:
         # debug_structure(self.state)
         # print(self.metrics_history)
 
-        def compute_test_metrics(test_state):
-            for _i, test_batch in zip(range(self.steps_in_test_epoch), self.test_dl):
+        def compute_test_metrics(test_state: TrainState):
+            for i, test_batch in zip(range(self.steps_in_test_epoch), self.test_dl):
                 test_preds = TrainingRun.test_preds(
                     self.config.train.loss,
                     test_state,
                     test_state.params,
                     test_batch,
-                    {k: jax.random.key(v) for k, v in self.rng.items()},
+                    {
+                        k: jax.random.key((v + i + test_state.step) % 2**16)
+                        for k, v in self.rng.items()
+                    },
                 )
 
                 # order of updates matters here: JAX recompiles if they differ

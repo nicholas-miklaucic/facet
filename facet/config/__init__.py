@@ -581,7 +581,7 @@ class MainConfig:
         from jax.experimental.compilation_cache.compilation_cache import set_cache_dir
 
         set_cache_dir('/tmp/jax_comp_cache')
-        jax.config.update('jax_explain_cache_misses', True)
+        # jax.config.update('jax_explain_cache_misses', True)
 
     @property
     def train_batch_multiple(self) -> int:
