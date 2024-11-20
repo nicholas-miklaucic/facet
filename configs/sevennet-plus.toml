@@ -19,15 +19,15 @@ k = 32
 batches_per_group = 1000
 
 [log]
-logs_per_epoch = 32
+logs_per_epoch = 64
 epochs_per_ckpt = 2
 epochs_per_valid = 0.5
 
 [train]
-base_lr = 1e-4
+base_lr = 1e-3
 max_grad_norm = 0.3
 ema_gamma = 0.995
-steps_between_ema = 16
+steps_between_ema = 32
 
 [model]
 residual = false
@@ -56,7 +56,7 @@ power = 1.0
 
 [train.optimizer]
 kind = "adamw"
-weight_decay = 1e-2
+weight_decay = 1e-8
 beta_1 = 0.9
 beta_2 = 0.999
 

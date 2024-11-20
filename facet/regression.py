@@ -101,7 +101,9 @@ class EFSLoss(PyTreeNode):
         loss = {
             'energy': self.loss_fn(pred.energy[..., 0], cg.e_form, cg.padding_mask),
             'force': self.loss_fn(
-                pred.force, cg.target_data.force, cg.padding_mask[cg.nodes.graph_i]
+                jax.nn.tanh(pred.force),
+                jax.nn.tanh(cg.target_data.force),
+                cg.padding_mask[cg.nodes.graph_i],
             ),
             'stress': self.loss_fn(
                 pred.stress[..., voigt_i, voigt_j],

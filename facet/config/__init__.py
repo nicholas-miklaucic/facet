@@ -289,7 +289,7 @@ class LossConfig:
     @property
     def efs_wrapper(self) -> EFSWrapper:
         return EFSWrapper(
-            compute_forces=self.force_weight == 0, compute_stress=self.stress_weight == 0
+            compute_forces=self.force_weight != 0, compute_stress=self.stress_weight != 0
         )
 
     @property
@@ -431,6 +431,7 @@ class AdamWConfig(OptimizerConfig):
             b2=self.beta_2,
             weight_decay=self.weight_decay,
             nesterov=self.nesterov,
+            eps=1e-6,
         )
         if self.mechanize:
             tx = optax.contrib.mechanize(tx)
@@ -506,7 +507,7 @@ class TrainingConfig:
 
     def __post_init__(self):
         if self.optimizer.kind == 'prodigy' and self.base_lr < 1e-2:
-            logging.warn(
+            logging.warning(
                 f'Prodigy should normally be used with a base LR of 1. Are you sure you want {self.base_lr}?'
             )
 
