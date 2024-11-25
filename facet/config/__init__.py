@@ -156,9 +156,9 @@ class RegressionLossConfig:
         https://www.desmos.com/calculator/ntiznoeea8
         """
         if self.loss_delta == 0:
-            return jnp.square(preds - targets)
-        elif self.loss_delta == np.inf:
             return jnp.abs(preds - targets)
+        elif self.loss_delta == np.inf:
+            return jnp.square(preds - targets)
         else:
             a = -5 / 2 / 8
             b = 63 / 8 / 6

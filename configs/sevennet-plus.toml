@@ -1,6 +1,6 @@
 batch_size = 32
 stack_size = 1
-num_epochs = 5
+num_epochs = 4
 precision = "f32"
 debug_mode = false
 do_profile = false
@@ -19,7 +19,7 @@ k = 32
 batches_per_group = 1000
 
 [log]
-logs_per_epoch = 64
+logs_per_epoch = 32
 epochs_per_ckpt = 2
 epochs_per_valid = 0.5
 
@@ -43,8 +43,8 @@ hidden_irreps = [
 ]
 
 [train.loss]
-energy_weight = 0.1
-force_weight = 1
+energy_weight = 1
+force_weight = 0.1
 stress_weight = 0
 
 [train.lr_schedule]
@@ -56,7 +56,7 @@ power = 1.0
 
 [train.optimizer]
 kind = "adamw"
-weight_decay = 1e-8
+weight_decay = 1e-3
 beta_1 = 0.9
 beta_2 = 0.999
 
@@ -93,7 +93,7 @@ use_fft = false
 inner_dims = [16]
 activation = "swish"
 final_activation = "Identity"
-dropout = 0.0
+dropout = 0.2
 residual = false
 num_heads = 2
 use_bias = false
@@ -107,7 +107,7 @@ inner_dims = [64]
 activation = "Identity"
 final_activation = "Identity"
 out_dim = 0
-dropout = 0
+dropout = 0.2
 residual = false
 num_heads = 1
 use_bias = false
