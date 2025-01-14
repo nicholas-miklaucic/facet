@@ -28,7 +28,7 @@ from facet.config import LossConfig, MainConfig
 from facet.data.dataset import CrystalGraphs, dataloader
 from facet.layers import Context
 from facet.model_summary import model_summary
-from facet.utils import debug_structure, get_nested_path, item_if_arr, load_pytree
+from facet.utils import debug_stat, debug_structure, get_nested_path, item_if_arr, load_pytree
 
 import neptune  # type: ignore
 from neptune.types import File  # type: ignore
@@ -325,19 +325,23 @@ class TrainingRun:
             if self.config.restart_from is not None:
                 if self.config.checkpoint_params is not None:
                     raise ValueError('Cannot give both restart_from and checkpoint_params')
-                self.state = self.state.replace(
-                    params=best_ckpt(self.config.restart_from)['state']['params']
-                )
+                state = best_ckpt(self.config.restart_from)['state']
+                self.state = self.state.replace(params=state['params'])
             elif self.config.checkpoint_params is not None:
                 ckpt_params = load_pytree(self.config.checkpoint_params)
 
+                # print(tuple(ckpt_params.keys()))
+                if tuple(ckpt_params.keys()) != ('params',):
+                    ckpt_params = {'params': ckpt_params}
                 flattened, _ = jax.tree_util.tree_flatten_with_path(ckpt_params)
+                # print(jax.tree_util.tree_flatten_with_path(self.state.params)[0])
 
                 def replace(kp, x):
+                    kpstr = jax.tree_util.keystr(kp)
                     for kp2, new_x in flattened:
-                        if kp == kp2:
+                        if kpstr == jax.tree_util.keystr(kp2):
                             return new_x
-                    logging.info(f'{jax.tree_util.keystr(kp)} not in checkpoint')
+                    logging.warning(f'{kpstr} not in checkpoint')
                     return x
 
                 self.state = self.state.replace(

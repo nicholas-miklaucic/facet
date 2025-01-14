@@ -1,61 +1,70 @@
 batch_size = 32
 stack_size = 1
-num_epochs = 2
+num_epochs = 12
+checkpoint_params = "precomputed/sevennet.ckpt"
 precision = "f32"
 debug_mode = false
 do_profile = false
 display = "progress"
-checkpoint_params = "precomputed/sevennet-trimmed.ckpt"
 
 [data]
 dataset_name = "mptrj"
 raw_data_folder = "data"
 data_folder = "precomputed"
 shuffle_seed = 1618
-train_split = 27
-test_split = 6
+train_split = 30
+test_split = 3
 valid_split = 3
 batches_per_group = 0
 
+[cli]
+verbosity = "info"
+show_progress = true
+
+[device]
+device = "gpu"
+max_gpus = 0
+gpu_ids = []
+
 [log]
-logs_per_epoch = 32
+log_dir = "logs"
+logs_per_epoch = 16
 epochs_per_ckpt = 5
-epochs_per_valid = 2.0
+epochs_per_valid = 0.5
+tags = []
+log_params = [ "edge_embedding/basis/mu", "edge_embedding/basis/sigma", "edge_embedding/basis/freq", "edge_embedding/rmax",]
 
 [train]
-base_lr = 1e-5
-max_grad_norm = 0.1
+base_lr = 1.0
+max_grad_norm = 3.0
 ema_gamma = 0.99
 steps_between_ema = 16
 
 [model]
 residual = false
 resid_init = "zeros"
+hidden_irreps = [ "128x0e + 64x1e + 32x2e", "128x0e + 64x1e + 32x2e", "128x0e + 64x1e + 32x2e", "128x0e + 64x1e + 32x2e",]
 outs_per_node = 128
 block_reduction = "last"
 share_species_embed = true
-hidden_irreps = [
-    "128x0e + 64x1e + 32x2e",
-    "128x0e + 64x1e + 32x2e",
-    "128x0e + 64x1e + 32x2e",
-    "128x0e + 64x1e + 32x2e",
-]
+norm = "identity"
 
 [train.loss]
-energy_weight = 1
-force_weight = 0
-stress_weight = 0
+energy_weight = 1.0
+force_weight = 1.0
+stress_weight = 0.0
 
 [train.lr_schedule]
 kind = "polynomial"
-warmup_frac = 0.5
+warmup_frac = 0.1
 start_lr = 0.01
 end_lr = 0.01
 power = 1.0
 
 [train.optimizer]
-kind = "adamw"
-weight_decay = 1e-3
+base_lr = 1.0
+kind = "prodigy"
+weight_decay = 1e-8
 beta_1 = 0.9
 beta_2 = 0.99
 
@@ -65,12 +74,12 @@ kind = "linear"
 
 [model.edge_embed]
 r_max = 5.0
-r_max_trainable = true
+r_max_trainable = false
 radius_transform = "Identity"
 
 [model.interaction]
-kind = "simple"
 residual = true
+kind = "simple"
 linear_intro = true
 linear_outro = true
 
@@ -84,7 +93,7 @@ kind = "gate"
 kind = "sevennet"
 
 [model.head]
-inner_dims = [64]
+inner_dims = []
 activation = "Identity"
 final_activation = "Identity"
 out_dim = 0
@@ -99,7 +108,7 @@ loss_delta = 0.015625
 use_rmse = false
 
 [model.edge_embed.radial_basis]
-num_basis = 10
+num_basis = 8
 kind = "bessel"
 freq_trainable = true
 use_sinc = true

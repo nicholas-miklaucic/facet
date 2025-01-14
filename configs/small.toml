@@ -1,10 +1,11 @@
 batch_size = 32
 stack_size = 1
-num_epochs = 13
+num_epochs = 100
 precision = "f32"
 debug_mode = false
 do_profile = false
 display = "progress"
+# checkpoint_params = "precomputed/enb-120.ckpt"
 
 [data]
 dataset_name = "mptrj"
@@ -40,7 +41,7 @@ steps_between_ema = 32
 kind = "polynomial"
 warmup_frac = 0.1
 start_lr = 0.01
-end_lr = 0.99
+end_lr = 0.01
 power = 1.0
 
 [train.optimizer]
@@ -67,7 +68,7 @@ stress_weight = 0
 inner_dims = []
 activation = "silu"
 final_activation = "Identity"
-dropout = 0.2
+dropout = 0.1
 residual = false
 num_heads = 1
 use_bias = false
@@ -89,15 +90,15 @@ kind = "derived"
 dim = 512
 max_degree = 2
 gamma = 1
-num_layers = 3
+num_layers = 4
 min_gcd = 2
 
 [train.loss.reg_loss]
-loss_delta = 0.015625
+loss_delta = 0
 use_rmse = false
 
 [model.edge_embed]
-r_max = 6
+r_max = 5
 r_max_trainable = false
 
 [model.edge_embed.radial_basis]
@@ -139,7 +140,7 @@ use_fft = false
 inner_dims = [16]
 activation = "silu"
 final_activation = "silu"
-dropout = 0.1
+dropout = 0.25
 residual = false
 num_heads = 2
 use_bias = false
