@@ -51,6 +51,7 @@ class SevenNetConv(MPConv):
     """
 
     radial_weight: LazyInMLP
+    radial_power: float = 1
 
     # @nn.compact
     # def __call__(
@@ -196,7 +197,7 @@ class SevenNetConv(MPConv):
         h = h.astype(h_type)
 
         # normalize by the average (not local) number of neighbors
-        h = h / avg_num_neighbors
+        h = h / (avg_num_neighbors**self.radial_power)
 
         return h
 
@@ -339,6 +340,7 @@ class NodeFeatureMLPWeightedConv(MPConv):
 
 class SimpleMixMLPConv(MPConv):
     radial_mix: LazyInMLP
+    radius_power: float = 1
 
     @nn.compact
     def __call__(
@@ -395,7 +397,7 @@ class SimpleMixMLPConv(MPConv):
         zeros = E3IrrepsArray.zeros(messages.irreps, node_feats.shape[:1], messages.dtype)
         # TODO flip this perhaps?
         node_feats = zeros.at[receivers].add(messages)  # [n_nodes, irreps]
-        node_feats = node_feats / avg_num_neighbors
+        node_feats = node_feats / (avg_num_neighbors**self.radius_power)
 
         return node_feats
 

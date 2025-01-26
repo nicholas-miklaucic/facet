@@ -1,7 +1,7 @@
 batch_size = 32
 stack_size = 1
 num_epochs = 12
-checkpoint_params = "precomputed/sevennet.ckpt"
+checkpoint_params = "precomputed/sevennet-trimmed-emb8-linhead.ckpt"
 precision = "f32"
 debug_mode = false
 do_profile = false
@@ -120,6 +120,7 @@ cutoff_start = 0.9
 [model.interaction.message]
 kind = "sevennet-conv"
 max_ell = 2
+radial_power = 0.7
 
 [model.interaction.message.radial_weight]
 inner_dims = []

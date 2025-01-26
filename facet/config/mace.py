@@ -20,7 +20,7 @@ from facet.mace.edge_embedding import (
     GaussBasis,
     ExpCutoff,
     Envelope,
-    XPLORCutoff
+    XPLORCutoff,
 )
 from facet.mace.mace import (
     MaceModel,
@@ -73,7 +73,7 @@ class BesselBasisConfig(RadialBasisConfig):
     use_sinc: bool = True
 
     def build(self) -> SincBasis | BesselBasis:
-        basis = SincBasis if self.use_sinc else BesselBasis        
+        basis = SincBasis if self.use_sinc else BesselBasis
         return basis(num_basis=self.num_basis, freq_trainable=self.freq_trainable)
 
 
@@ -86,10 +86,11 @@ class EnvelopeConfig:
 @dataclass
 class XPLORCutoffConfig:
     kind: Const('xplor') = 'xplor'
-    cutoff_start: float = 0.95    
+    cutoff_start: float = 0.95
 
     def build(self) -> ExpCutoff:
         return XPLORCutoff(cutoff_on=self.cutoff_start)
+
 
 @dataclass
 class ExpCutoffConfig:
@@ -155,6 +156,7 @@ class SevenNetConvConfig(MessageConfig):
             use_bias=False,
         )
     )
+    radial_power: float = 1
 
     def build(self) -> SevenNetConv:
         if (
@@ -171,6 +173,7 @@ class SevenNetConvConfig(MessageConfig):
             avg_num_neighbors=self.avg_num_neighbors,
             max_ell=self.max_ell,
             radial_weight=self.radial_weight.build(),
+            radial_power=self.radial_power,
         )
 
 

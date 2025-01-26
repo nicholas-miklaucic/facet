@@ -1,11 +1,11 @@
 batch_size = 32
 stack_size = 1
-num_epochs = 100
+num_epochs = 12
 precision = "f32"
 debug_mode = false
 do_profile = false
 display = "progress"
-# checkpoint_params = "precomputed/enb-120.ckpt"
+# restart_from = "logs/enb-166"
 
 [data]
 dataset_name = "mptrj"
@@ -25,38 +25,39 @@ show_progress = true
 [log]
 log_dir = "logs"
 logs_per_epoch = 32
-epochs_per_ckpt = 3
+epochs_per_ckpt = 2
 epochs_per_valid = 0.5
-tags = []
+tags = ["07-exponent"]
 
 [model]
-outs_per_node = 128
+outs_per_node = 64
+hidden_irreps = ["128x0e + 64x1e + 32x2e", "128x0e + 64x1e + 32x2e"]
 
 [train]
 max_grad_norm = 1.0
-ema_gamma = 0.995
+ema_gamma = 0.99
 steps_between_ema = 32
 
 [train.lr_schedule]
 kind = "polynomial"
 warmup_frac = 0.1
-start_lr = 0.01
-end_lr = 0.01
+start_lr = 0.1
+end_lr = 0.1
 power = 1.0
 
-[train.optimizer]
-base_lr = 1.0
-kind = "prodigy"
-weight_decay = 1e-4
-beta_1 = 0.9
-beta_2 = 0.999
-
 # [train.optimizer]
-# base_lr = 1e-3
-# kind = "adamw"
-# weight_decay = 1e-4
+# base_lr = 1.0
+# kind = "prodigy"
+# weight_decay = 1e-3
 # beta_1 = 0.9
-# beta_2 = 0.999
+# beta_2 = 0.99
+
+[train.optimizer]
+base_lr = 2e-4
+kind = "adamw"
+weight_decay = 1e-3
+beta_1 = 0.9
+beta_2 = 0.99
 # schedule_free = true
 
 [train.loss]
@@ -68,14 +69,14 @@ stress_weight = 0
 inner_dims = []
 activation = "silu"
 final_activation = "Identity"
-dropout = 0.1
+dropout = 0.2
 residual = false
 num_heads = 1
 use_bias = false
-normalization = "layer"
+normalization = "Identity"
 
 [model.node_embed]
-embed_dim = 128
+embed_dim = 64
 kind = "linear"
 
 [model.rescale]
@@ -85,26 +86,18 @@ shift_trainable = true
 global_scale_trainable = true
 global_shift_trainable = true
 
-[model.hidden_irreps]
-kind = "derived"
-dim = 512
-max_degree = 2
-gamma = 1
-num_layers = 4
-min_gcd = 2
-
 [train.loss.reg_loss]
 loss_delta = 0
 use_rmse = false
 
 [model.edge_embed]
-r_max = 5
-r_max_trainable = false
+r_max = 6.0
+r_max_trainable = true
 
 [model.edge_embed.radial_basis]
-num_basis = 12
+num_basis = 8
 kind = "bessel"
-freq_trainable = false
+freq_trainable = true
 use_sinc = true
 
 [model.edge_embed.envelope]
@@ -140,11 +133,11 @@ use_fft = false
 inner_dims = [16]
 activation = "silu"
 final_activation = "silu"
-dropout = 0.25
+dropout = 0.0
 residual = false
 num_heads = 2
 use_bias = false
-normalization = "layer"
+normalization = "Identity"
 
 [model.interaction.message.radial_weight]
 inner_dims = []
@@ -154,4 +147,4 @@ dropout = 0.0
 residual = false
 num_heads = 1
 use_bias = false
-normalization = "layer"
+normalization = "Identity"
