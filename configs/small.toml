@@ -1,11 +1,10 @@
 batch_size = 32
 stack_size = 1
-num_epochs = 12
+num_epochs = 60
 precision = "f32"
 debug_mode = false
 do_profile = false
 display = "progress"
-# restart_from = "logs/enb-166"
 
 [data]
 dataset_name = "mptrj"
@@ -15,55 +14,92 @@ shuffle_seed = 29205
 train_split = 30
 test_split = 3
 valid_split = 3
-k = 32
 batches_per_group = 0
+k = 48
 
 [cli]
 verbosity = "info"
 show_progress = true
+
+[device]
+device = "gpu"
+max_gpus = 0
+gpu_ids = []
 
 [log]
 log_dir = "logs"
 logs_per_epoch = 32
 epochs_per_ckpt = 2
 epochs_per_valid = 0.5
-tags = ["07-exponent"]
-
-[model]
-outs_per_node = 64
-hidden_irreps = ["128x0e + 64x1e + 32x2e", "128x0e + 64x1e + 32x2e"]
+tags = []
+log_params = [
+    "edge_embedding/basis/mu",
+    "edge_embedding/basis/sigma",
+    "edge_embedding/basis/freq",
+    "edge_embedding/rmax",
+]
 
 [train]
-max_grad_norm = 1.0
+base_lr = 1.0
+max_grad_norm = 0.4
 ema_gamma = 0.99
 steps_between_ema = 32
 
+[model]
+residual = true
+resid_init = "zeros"
+hidden_irreps = ["128x0e + 64x1e + 32x2e", "128x0e + 64x1e + 32x2e"]
+outs_per_node = 64
+block_reduction = "last"
+share_species_embed = true
+norm = "identity"
+
+[train.loss]
+energy_weight = 1.0
+force_weight = 0.0
+stress_weight = 0.0
+
 [train.lr_schedule]
 kind = "polynomial"
-warmup_frac = 0.1
+warmup_frac = 0.02
 start_lr = 0.1
 end_lr = 0.1
 power = 1.0
 
-# [train.optimizer]
-# base_lr = 1.0
-# kind = "prodigy"
-# weight_decay = 1e-3
-# beta_1 = 0.9
-# beta_2 = 0.99
-
 [train.optimizer]
-base_lr = 2e-4
-kind = "adamw"
-weight_decay = 1e-3
+base_lr = 1.0
+kind = "prodigy"
+weight_decay = 0.001
 beta_1 = 0.9
 beta_2 = 0.99
-# schedule_free = true
 
-[train.loss]
-energy_weight = 1.0
-force_weight = 0
-stress_weight = 0
+[model.node_embed]
+embed_dim = 64
+kind = "linear"
+
+[model.edge_embed]
+r_max = 6.0
+r_max_trainable = true
+radius_transform = "Identity"
+
+[model.interaction]
+residual = true
+kind = "simple"
+linear_intro = false
+linear_outro = true
+
+[model.readout]
+kind = "identity"
+
+[model.self_connection]
+kind = "s2-mlp-mixer"
+
+[model.rescale]
+kind = "species-wise"
+scale_trainable = true
+shift_trainable = true
+global_scale_trainable = true
+global_shift_trainable = true
 
 [model.head]
 inner_dims = []
@@ -75,24 +111,9 @@ num_heads = 1
 use_bias = false
 normalization = "Identity"
 
-[model.node_embed]
-embed_dim = 64
-kind = "linear"
-
-[model.rescale]
-kind = "species-wise"
-scale_trainable = true
-shift_trainable = true
-global_scale_trainable = true
-global_shift_trainable = true
-
 [train.loss.reg_loss]
-loss_delta = 0
+loss_delta = 0.0
 use_rmse = false
-
-[model.edge_embed]
-r_max = 6.0
-r_max_trainable = true
 
 [model.edge_embed.radial_basis]
 num_basis = 8
@@ -105,21 +126,10 @@ kind = "exp"
 cutoff_start = 0.8
 c = 0.1
 
-[model.interaction]
-kind = 'simple'
-residual = true
-linear_intro = false
-linear_outro = true
-
 [model.interaction.message]
 kind = "sevennet-conv"
 max_ell = 2
-
-# [model.self_connection]
-# kind = 'linear'
-
-[model.self_connection]
-kind = "s2-mlp-mixer"
+radial_power = 0.7
 
 [model.self_connection.s2_grid]
 activation = "silu"

@@ -1,7 +1,7 @@
 batch_size = 32
 stack_size = 1
-num_epochs = 50
-checkpoint_params = "precomputed/sevennet-trimmed.ckpt"
+num_epochs = 12
+checkpoint_params = "precomputed/sevennet-trimmed-emb8-linhead.ckpt"
 precision = "f32"
 debug_mode = false
 do_profile = false
@@ -77,7 +77,7 @@ base_lr = 1
 kind = "adamw"
 weight_decay = 1e-4
 beta_1 = 0.9
-beta_2 = 0.999
+beta_2 = 0.98
 nesterov = false
 mechanize = false
 schedule_free = false
@@ -107,11 +107,11 @@ kind = "s2-mlp-mixer"
 kind = "sevennet"
 
 [model.head]
-inner_dims = [64]
-activation = "tanh"
+inner_dims = []
+activation = "Identity"
 final_activation = "Identity"
 out_dim = 0
-dropout = 0.15
+dropout = 0.1
 residual = false
 num_heads = 1
 use_bias = false
@@ -122,7 +122,7 @@ loss_delta = 0
 use_rmse = false
 
 [model.edge_embed.radial_basis]
-num_basis = 10
+num_basis = 8
 kind = "bessel"
 freq_trainable = true
 use_sinc = true

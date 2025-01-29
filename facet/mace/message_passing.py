@@ -52,7 +52,6 @@ class SevenNetConv(MPConv):
 
     radial_weight: LazyInMLP
     radial_power: float = 1
-
     # @nn.compact
     # def __call__(
     #     self,
@@ -167,12 +166,13 @@ class SevenNetConv(MPConv):
         fc: LazyInMLP = self.radial_weight.copy(out_dim=n_tp_weights)
 
         # the TP weights (v dimension) are given by the FC
-        weight = fc(radial_embedding, ctx=ctx).astype(jnp.bfloat16)
+        weight = fc(radial_embedding, ctx=ctx)
 
         # debug_structure(weight=weight, edge_features=edge_features, sh=edge_sh)
 
         # tp between node features that have been mapped onto edges and edge RSH
         # weighted by FC weight, we vmap over the dimension of the edges
+
         edge_features = e3nn.vmap(
             e3nn.vmap(
                 ft.partial(
