@@ -1,0 +1,164 @@
+batch_size = 32
+stack_size = 1
+num_epochs = 12
+precision = "f32"
+debug_mode = false
+do_profile = false
+display = "progress"
+checkpoint_params = "precomputed/enb-183.ckpt"
+
+[data]
+dataset_name = "mptrj"
+raw_data_folder = "data"
+data_folder = "precomputed"
+shuffle_seed = 29205
+train_split = 30
+test_split = 3
+valid_split = 3
+batches_per_group = 0
+k = 32
+
+[cli]
+verbosity = "info"
+show_progress = true
+
+[device]
+device = "gpu"
+max_gpus = 0
+gpu_ids = []
+
+[log]
+log_dir = "logs"
+logs_per_epoch = 32
+epochs_per_ckpt = 2
+epochs_per_valid = 0.5
+tags = []
+log_params = [
+    "edge_embedding/basis/mu",
+    "edge_embedding/basis/sigma",
+    "edge_embedding/basis/freq",
+    "edge_embedding/rmax",
+]
+
+[train]
+base_lr = 1.0
+max_grad_norm = 0.4
+ema_gamma = 0.99
+steps_between_ema = 32
+
+[model]
+residual = true
+resid_init = "zeros"
+hidden_irreps = [
+    "128x0e + 32x1e + 16x2e + 8x3e",
+    "128x0e + 64x1e + 32x2e + 16x3e",
+]
+outs_per_node = 128
+block_reduction = "last"
+share_species_embed = true
+norm = "identity"
+
+[train.loss]
+energy_weight = 1.0
+force_weight = 0.0
+stress_weight = 0.0
+
+[train.lr_schedule]
+kind = "polynomial"
+warmup_frac = 0.02
+start_lr = 0.1
+end_lr = 0.1
+power = 1.0
+
+[train.optimizer]
+base_lr = 1e-4
+kind = "adamw"
+weight_decay = 0.001
+beta_1 = 0.9
+beta_2 = 0.99
+
+[model.node_embed]
+embed_dim = 128
+kind = "linear"
+
+[model.edge_embed]
+r_max = 5.0
+r_max_trainable = true
+radius_transform = "Identity"
+
+[model.interaction]
+residual = true
+kind = "simple"
+linear_intro = false
+linear_outro = true
+
+[model.readout]
+kind = "identity"
+
+[model.self_connection]
+kind = "s2-mlp-mixer"
+
+[model.rescale]
+kind = "species-wise"
+scale_trainable = true
+shift_trainable = true
+global_scale_trainable = true
+global_shift_trainable = true
+
+[model.head]
+inner_dims = []
+activation = "silu"
+final_activation = "Identity"
+dropout = 0.2
+residual = false
+num_heads = 1
+use_bias = false
+normalization = "Identity"
+
+[train.loss.reg_loss]
+loss_delta = 0.0
+use_rmse = false
+
+[model.edge_embed.radial_basis]
+num_basis = 8
+kind = "bessel"
+freq_trainable = true
+use_sinc = true
+
+[model.edge_embed.envelope]
+kind = "exp"
+cutoff_start = 0.8
+c = 0.1
+
+[model.interaction.message]
+kind = "sevennet-conv"
+max_ell = 3
+radial_power = 0.7
+
+[model.self_connection.s2_grid]
+activation = "silu"
+res_beta = 18
+res_alpha = 17
+normalization = "integral"
+quadrature = "soft"
+use_fft = false
+
+[model.self_connection.mlp]
+inner_dims = [16]
+activation = "silu"
+final_activation = "silu"
+dropout = 0.2
+residual = false
+num_heads = 2
+use_bias = false
+normalization = "Identity"
+
+[model.interaction.message.radial_weight]
+inner_dims = []
+activation = "silu"
+final_activation = "Identity"
+dropout = 0.0
+residual = false
+num_heads = 1
+use_bias = false
+normalization = "Identity"

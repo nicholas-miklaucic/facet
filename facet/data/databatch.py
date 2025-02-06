@@ -169,10 +169,20 @@ class CrystalGraphs(struct.PyTreeNode):
             )
         )
 
-    def rotate(self, seed: int) -> tuple['CrystalGraphs', Float[Array, 'n_graph 3 3']]:
+    def rotate(
+        self, seed: int, improper: bool = False
+    ) -> tuple['CrystalGraphs', Float[Array, 'n_graph 3 3']]:
         """Rotate the coordinates using random rotation matrices. Returns the rotated outputs and
-        the matrices."""
+        the matrices.
+
+        If improper is True, can also apply inversions."""
         rots = e3nn.rand_matrix(jax.random.key(seed), shape=(self.n_total_graphs,))
+        if improper:
+            invs = jnp.eye(3)[None, ...] * (
+                (-1)
+                ** jax.random.bernoulli(jax.random.key(seed), shape=(self.n_total_graphs, 1, 1))
+            )
+            rots = jnp.einsum('bij,bjk->bik', rots, invs)
         lat_rot_m = jnp.einsum('bij,bjk->bik', self.globals.lat, rots)
         new_carts = jnp.einsum('bik,bi->bk', lat_rot_m[self.nodes.graph_i], self.frac)
         new_nodes = self.nodes.replace(cart=new_carts)

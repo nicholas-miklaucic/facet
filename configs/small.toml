@@ -1,10 +1,11 @@
 batch_size = 32
 stack_size = 1
-num_epochs = 60
+num_epochs = 12
 precision = "f32"
 debug_mode = false
 do_profile = false
 display = "progress"
+checkpoint_params = "precomputed/enb-195.ckpt"
 
 [data]
 dataset_name = "mptrj"
@@ -15,7 +16,7 @@ train_split = 30
 test_split = 3
 valid_split = 3
 batches_per_group = 0
-k = 48
+k = 32
 
 [cli]
 verbosity = "info"
@@ -29,27 +30,30 @@ gpu_ids = []
 [log]
 log_dir = "logs"
 logs_per_epoch = 32
-epochs_per_ckpt = 2
+epochs_per_ckpt = 1
 epochs_per_valid = 0.5
 tags = []
 log_params = [
-    "edge_embedding/basis/mu",
-    "edge_embedding/basis/sigma",
+#    "edge_embedding/basis/mu",
+#    "edge_embedding/basis/sigma",
     "edge_embedding/basis/freq",
     "edge_embedding/rmax",
 ]
 
 [train]
 base_lr = 1.0
-max_grad_norm = 0.4
+max_grad_norm = 1.0
 ema_gamma = 0.99
 steps_between_ema = 32
 
 [model]
 residual = true
 resid_init = "zeros"
-hidden_irreps = ["128x0e + 64x1e + 32x2e", "128x0e + 64x1e + 32x2e"]
-outs_per_node = 64
+hidden_irreps = [
+    "128x0e + 64x1e + 32x2e + 16x3e",
+    "128x0e + 64x1e + 32x2e + 16x3e",
+]
+outs_per_node = 128
 block_reduction = "last"
 share_species_embed = true
 norm = "identity"
@@ -61,24 +65,24 @@ stress_weight = 0.0
 
 [train.lr_schedule]
 kind = "polynomial"
-warmup_frac = 0.02
-start_lr = 0.1
-end_lr = 0.1
+warmup_frac = 0.1
+start_lr = 0.01
+end_lr = 0.01
 power = 1.0
 
 [train.optimizer]
-base_lr = 1.0
-kind = "prodigy"
-weight_decay = 0.001
+base_lr = 1e-4
+kind = "adamw"
+weight_decay = 0.002
 beta_1 = 0.9
-beta_2 = 0.99
+beta_2 = 0.999
 
 [model.node_embed]
-embed_dim = 64
+embed_dim = 128
 kind = "linear"
 
 [model.edge_embed]
-r_max = 6.0
+r_max = 5.0
 r_max_trainable = true
 radius_transform = "Identity"
 
@@ -128,7 +132,7 @@ c = 0.1
 
 [model.interaction.message]
 kind = "sevennet-conv"
-max_ell = 2
+max_ell = 3
 radial_power = 0.7
 
 [model.self_connection.s2_grid]

@@ -302,6 +302,7 @@ class S2SelfConnection(SelfConnectionBlock):
         # we can only project S2 activations to a single output irrep in each dimension. We need to
         # project so we have that many distinct irreps to do this with.
         if node_feats.irreps.lmax == 0:
+            # return self.mlp.copy(inner_dims=[node_feats.shape[-1]])(node_feats, ctx=ctx)
             return self.mlp.copy(inner_dims=[node_feats.shape[-1]] * 2)(node_feats, ctx=ctx)
 
         up_mul = max([mul for mul, _ir in node_feats.filter(drop=['0e', '0o']).irreps])
