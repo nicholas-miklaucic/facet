@@ -75,6 +75,6 @@ def eval_model(
 
 
 if __name__ == '__main__':
-    for split in ('test', 'valid'):
-        eval_model(Path('logs') / 'enb-183', split)
+    for split in ('train', 'test', 'valid'):
+        eval_model(Path('logs') / 'enb-198', split)
     # eval_model(Path('logs') / 'enb-159', 'test')
